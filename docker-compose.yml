@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    restart: always
+    volumes:
+      - ./data:/app/data
+      - ./downloads:/app/downloads
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - ADMIN_IDS=${ADMIN_IDS}
+      - DB_PATH=/app/data/bot.db
