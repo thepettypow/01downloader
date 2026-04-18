@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from aiohttp import ClientTimeout
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.aiohttp import AiohttpSession
 from bot.config.settings import config
@@ -12,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 async def main():
     await init_db()
     
-    session = AiohttpSession(timeout=ClientTimeout(total=int(getattr(config, "telegram_request_timeout", 7200))))
+    session = AiohttpSession(timeout=int(getattr(config, "telegram_request_timeout", 7200)))
     bot = Bot(token=config.bot_token, session=session)
     dp = Dispatcher()
     
