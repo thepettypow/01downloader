@@ -58,7 +58,6 @@ def _download_sync(url: str, mode: str) -> dict:
     else:
         ydl_opts.update({
             'format': 'bv*+ba/best',
-            'merge_output_format': 'mp4',
         })
         
     try:
@@ -78,7 +77,6 @@ def _download_sync(url: str, mode: str) -> dict:
             if 'Requested format is not available' not in msg:
                 raise
             fallback_opts = dict(ydl_opts)
-            fallback_opts.pop('merge_output_format', None)
             fallback_opts['format'] = 'best'
             info, file_path = run_download(fallback_opts)
 
