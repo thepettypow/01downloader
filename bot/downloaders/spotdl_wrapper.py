@@ -36,7 +36,14 @@ async def download_spotify(url: str) -> dict:
             url,
             "--output", f"{unique_dir}/{{title}} - {{artist}}.{{ext}}",
             "--format", "mp3",
+            "--print-errors",
+            "--log-level",
+            "ERROR",
         ]
+        client_id = (getattr(config, "spotdl_client_id", None) or "").strip()
+        client_secret = (getattr(config, "spotdl_client_secret", None) or "").strip()
+        if client_id and client_secret:
+            args += ["--client-id", client_id, "--client-secret", client_secret]
         cookie_path = _find_cookie_file()
         if cookie_path:
             args += ["--cookie-file", cookie_path]
@@ -70,13 +77,17 @@ async def download_spotify(url: str) -> dict:
         
         err = (stderr.decode('utf-8', errors='ignore') if stderr else '') or ''
         out = (stdout.decode('utf-8', errors='ignore') if stdout else '') or ''
-        logger.error("spotdl failed rc=%s url=%s stderr=%s", process.returncode, url, err.strip()[:2000])
+        logger.error("spotdl failed rc=%s url=%s stderr=%s stdout=%s", process.returncode, url, err.strip()[:1200], out.strip()[:1200])
 
         # Cleanup on failure
         shutil.rmtree(unique_dir, ignore_errors=True)
-        msg = (err or out or 'Spotify download failed').strip()
+        msg = (err or out or '').strip()
+        if not msg:
+            msg = "Spotify download failed with no error output."
+            if not (client_id and client_secret):
+                msg += "\n\nSet SPOTDL_CLIENT_ID and SPOTDL_CLIENT_SECRET (Spotify API app creds)."
         if "client id" in msg.lower() or "client secret" in msg.lower() or "spotipy" in msg.lower():
-            msg = msg + "\n\nSet SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET in your environment."
+            msg = msg + "\n\nSet SPOTDL_CLIENT_ID and SPOTDL_CLIENT_SECRET (Spotify API app creds)."
         if "sign in to confirm you're not a bot" in msg.lower() or "sign in to confirm you’re not a bot" in msg.lower():
             msg = msg + "\n\nYouTube is blocking downloads. Add cookies.txt for music.youtube.com (spotdl --cookie-file)."
         return {'success': False, 'error': msg}
