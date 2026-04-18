@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     ytdlp_force_ipv4: bool = True
     ytdlp_socket_timeout: int = 20
     ytdlp_retries: int = 3
+    ytdlp_skip_youtubetab_authcheck: bool = True
 
     class Config:
         env_file = ".env"

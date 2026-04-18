@@ -36,6 +36,8 @@ def _download_sync(url: str, mode: str) -> dict:
     ydl_opts["socket_timeout"] = getattr(config, "ytdlp_socket_timeout", 20)
     ydl_opts["retries"] = getattr(config, "ytdlp_retries", 3)
     ydl_opts["fragment_retries"] = getattr(config, "ytdlp_retries", 3)
+    if getattr(config, "ytdlp_skip_youtubetab_authcheck", True):
+        ydl_opts["extractor_args"] = {"youtubetab": {"skip": ["authcheck"]}}
     if getattr(config, "ytdlp_force_ipv4", True):
         ydl_opts["source_address"] = "0.0.0.0"
     cookie_file = (config.ytdlp_cookie_file or "").strip()
