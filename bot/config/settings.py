@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     spotdl_timeout: int = 900
     spotdl_client_id: Optional[str] = None
     spotdl_client_secret: Optional[str] = None
+    spotify_use_spotdl: bool = False
     telegram_request_timeout: int = 7200
     telegram_send_timeout: int = 120
     telegram_compress_timeout: int = 120

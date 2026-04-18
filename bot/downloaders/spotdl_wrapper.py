@@ -88,6 +88,14 @@ async def download_spotify(url: str) -> dict:
                 msg += "\n\nSet SPOTDL_CLIENT_ID and SPOTDL_CLIENT_SECRET (Spotify API app creds)."
         if "client id" in msg.lower() or "client secret" in msg.lower() or "spotipy" in msg.lower():
             msg = msg + "\n\nSet SPOTDL_CLIENT_ID and SPOTDL_CLIENT_SECRET (Spotify API app creds)."
+        if "active premium subscription required for the owner of the app" in msg.lower():
+            msg = (
+                "Spotify API rejected the request: Premium subscription is required for the Spotify account that owns the Developer App.\n\n"
+                "Fix:\n"
+                "1) Upgrade the app owner account to Spotify Premium\n"
+                "2) Wait a few hours for Spotify to propagate the subscription change\n"
+                "3) If it still fails, rotate the app Client Secret and update SPOTDL_CLIENT_SECRET"
+            )
         if "sign in to confirm you're not a bot" in msg.lower() or "sign in to confirm you’re not a bot" in msg.lower():
             msg = msg + "\n\nYouTube is blocking downloads. Add cookies.txt for music.youtube.com (spotdl --cookie-file)."
         return {'success': False, 'error': msg}

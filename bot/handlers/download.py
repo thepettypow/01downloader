@@ -21,6 +21,7 @@ from bot.utils.queue_manager import queue_manager
 from bot.config.settings import config
 from bot.downloaders.ytdlp_wrapper import download_media, probe_media
 from bot.downloaders.spotdl_wrapper import download_spotify
+from bot.downloaders.spotify_fallback import download_spotify_fallback
 from bot.downloaders.http_fallback import download_direct_file
 from bot.utils.telegram_compress import compress_video_to_size, compress_audio_to_size
 from bot.utils.video_tools import probe_video, extract_thumbnail
@@ -39,21 +40,24 @@ async def _send_spotify_result(message: Message, lang: str, user_id: int, url: s
     spotify_files = result.get('file_paths') or []
     title = result.get('title', 'Media')
     dir_to_clean = result.get('dir_to_clean')
-    cover_path = None
+    cover_path = result.get("cover_path")
+    tracks = result.get("tracks") or []
     try:
         if not spotify_files:
             await message.answer(get_text(lang, 'error', error="Spotify download returned no files"))
             return
 
         loop = asyncio.get_event_loop()
-        try:
-            cover_path = os.path.join(config.download_dir, f"cover_{uuid.uuid4().hex}.jpg")
-            await loop.run_in_executor(None, extract_audio_cover, spotify_files[0], cover_path)
+        if not cover_path:
+            try:
+                cover_path = os.path.join(config.download_dir, f"cover_{uuid.uuid4().hex}.jpg")
+                await loop.run_in_executor(None, extract_audio_cover, spotify_files[0], cover_path)
+            except Exception:
+                cover_path = None
+        if cover_path and os.path.exists(cover_path):
             await message.answer_photo(FSInputFile(cover_path), caption=title)
-        except Exception:
-            cover_path = None
 
-        for fp in spotify_files:
+        for idx, fp in enumerate(spotify_files):
             meta = {}
             try:
                 meta = await loop.run_in_executor(None, probe_audio, fp)
@@ -61,29 +65,18 @@ async def _send_spotify_result(message: Message, lang: str, user_id: int, url: s
                 meta = {}
             performer = meta.get("artist")
             track_title = meta.get("title") or os.path.splitext(os.path.basename(fp))[0]
+            if idx < len(tracks):
+                performer = tracks[idx].get("artist") or performer
+                track_title = tracks[idx].get("title") or track_title
             d = meta.get("duration")
             duration_s = int(d) if d else None
-
-            thumb_path = None
-            try:
-                thumb_path = os.path.join(config.download_dir, f"thumb_{uuid.uuid4().hex}.jpg")
-                await loop.run_in_executor(None, extract_audio_cover, fp, thumb_path)
-            except Exception:
-                thumb_path = None
-
-            try:
-                kwargs = {"performer": performer, "title": track_title}
-                if duration_s:
-                    kwargs["duration"] = duration_s
-                if thumb_path and os.path.exists(thumb_path):
-                    kwargs["thumbnail"] = FSInputFile(thumb_path)
-                await message.answer_audio(FSInputFile(fp), **{k: v for k, v in kwargs.items() if v})
-            finally:
-                if thumb_path and os.path.exists(thumb_path):
-                    try:
-                        os.remove(thumb_path)
-                    except Exception:
-                        pass
+            thumb_path = cover_path if cover_path and os.path.exists(cover_path) else None
+            kwargs = {"performer": performer, "title": track_title}
+            if duration_s:
+                kwargs["duration"] = duration_s
+            if thumb_path:
+                kwargs["thumbnail"] = FSInputFile(thumb_path)
+            await message.answer_audio(FSInputFile(fp), **{k: v for k, v in kwargs.items() if v})
 
         await log_download(user_id, url, "audio")
     finally:
@@ -116,27 +109,36 @@ async def _handle_spotify_message(message: Message, user_id: int, lang: str, url
             pass
 
         started = asyncio.get_event_loop().time()
-        task = asyncio.create_task(download_spotify(url))
+        result = None
+        if bool(getattr(config, "spotify_use_spotdl", False)):
+            task = asyncio.create_task(download_spotify(url))
 
-        async def ticker():
-            while not task.done():
-                await asyncio.sleep(15)
-                if task.done():
-                    break
-                elapsed = int(asyncio.get_event_loop().time() - started)
-                try:
-                    await status_msg.edit_text(get_text(lang, 'downloading') + f"\n\n{elapsed}s")
-                except Exception:
-                    pass
+            async def ticker():
+                while not task.done():
+                    await asyncio.sleep(15)
+                    if task.done():
+                        break
+                    elapsed = int(asyncio.get_event_loop().time() - started)
+                    try:
+                        await status_msg.edit_text(get_text(lang, 'downloading') + f"\n\n{elapsed}s")
+                    except Exception:
+                        pass
 
-        ticker_task = asyncio.create_task(ticker())
-        try:
-            result = await task
-        finally:
-            ticker_task.cancel()
-        if not result.get("success"):
-            await status_msg.edit_text(get_text(lang, 'error', error=result.get("error", "Spotify download failed")))
-            return
+            ticker_task = asyncio.create_task(ticker())
+            try:
+                result = await task
+            finally:
+                ticker_task.cancel()
+
+        if not (result or {}).get("success"):
+            try:
+                await status_msg.edit_text(get_text(lang, 'downloading') + "\n\nYouTube fallback…")
+            except Exception:
+                pass
+            result = await download_spotify_fallback(url, max_tracks=50)
+            if not result.get("success"):
+                await status_msg.edit_text(get_text(lang, 'error', error=result.get("error", "Spotify download failed")))
+                return
 
         try:
             await status_msg.delete()
