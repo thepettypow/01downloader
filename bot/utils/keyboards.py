@@ -45,17 +45,21 @@ def download_choice_menu(lang: str, pending_id: int):
         inline_keyboard=[
             [
                 InlineKeyboardButton(text=get_text(lang, 'btn_video_360'), callback_data=f'dl:{pending_id}:video_360'),
+                InlineKeyboardButton(text=get_text(lang, 'btn_audio_128'), callback_data=f'dl:{pending_id}:audio_128'),
+            ],
+            [
                 InlineKeyboardButton(text=get_text(lang, 'btn_video_480'), callback_data=f'dl:{pending_id}:video_480'),
+                InlineKeyboardButton(text=get_text(lang, 'btn_audio_192'), callback_data=f'dl:{pending_id}:audio_192'),
+            ],
+            [
+                InlineKeyboardButton(text=get_text(lang, 'btn_video_720'), callback_data=f'dl:{pending_id}:video_720'),
+                InlineKeyboardButton(text=get_text(lang, 'btn_audio_320'), callback_data=f'dl:{pending_id}:audio_320'),
             ],
             [
                 InlineKeyboardButton(text=get_text(lang, 'btn_video_1080'), callback_data=f'dl:{pending_id}:video_1080'),
-                InlineKeyboardButton(text=get_text(lang, 'btn_video_720'), callback_data=f'dl:{pending_id}:video_720'),
+                InlineKeyboardButton(text=get_text(lang, 'btn_audio_best'), callback_data=f'dl:{pending_id}:audio_best'),
             ],
-            [
-                InlineKeyboardButton(text=get_text(lang, 'btn_video_best'), callback_data=f'dl:{pending_id}:video_best'),
-                InlineKeyboardButton(text=get_text(lang, 'btn_audio'), callback_data=f'dl:{pending_id}:audio'),
-            ],
-            [InlineKeyboardButton(text=get_text(lang, 'btn_document'), callback_data=f'dl:{pending_id}:document')],
+            [InlineKeyboardButton(text=get_text(lang, 'btn_video_best'), callback_data=f'dl:{pending_id}:video_best')],
             [InlineKeyboardButton(text=get_text(lang, 'btn_cancel'), callback_data=f'dl:{pending_id}:cancel')],
         ]
     )

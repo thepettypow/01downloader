@@ -6,10 +6,10 @@ import uuid
 from bot.config.settings import config
 import yt_dlp
 
-async def download_media(url: str, mode: str = 'video', max_height: int | None = None) -> dict:
+async def download_media(url: str, mode: str = 'video', max_height: int | None = None, audio_bitrate_kbps: int | None = None) -> dict:
     # Run yt-dlp in executor to not block async loop
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _download_sync, url, mode, max_height)
+    return await loop.run_in_executor(None, _download_sync, url, mode, max_height, audio_bitrate_kbps)
 
 def _find_downloaded_file(prefix: str) -> str | None:
     try:
@@ -59,6 +59,10 @@ def _ffmpeg_transcode_telegram_mp4(input_path: str, output_path: str, max_height
         vf = f"scale=-2:trunc(min({h},ih)/2)*2,format=yuv420p"
     cmd = [
         "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostats",
         "-y",
         "-i",
         input_path,
@@ -86,7 +90,7 @@ def _ffmpeg_transcode_telegram_mp4(input_path: str, output_path: str, max_height
     ]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, check=True)
 
-def _download_sync(url: str, mode: str, max_height: int | None) -> dict:
+def _download_sync(url: str, mode: str, max_height: int | None, audio_bitrate_kbps: int | None) -> dict:
     os.makedirs(config.download_dir, exist_ok=True)
     file_id = str(uuid.uuid4())
     
@@ -94,6 +98,7 @@ def _download_sync(url: str, mode: str, max_height: int | None) -> dict:
         'outtmpl': os.path.join(config.download_dir, f'{file_id}.%(ext)s'),
         'quiet': True,
         'no_warnings': True,
+        'noprogress': True,
         'max_filesize': 2000000000, # 2GB
     }
     remote_components = (getattr(config, "ytdlp_remote_components", "") or "").strip()
@@ -130,12 +135,13 @@ def _download_sync(url: str, mode: str, max_height: int | None) -> dict:
         ydl_opts['user_agent'] = user_agent
     
     if mode == 'audio':
+        bitrate = int(audio_bitrate_kbps or 192)
         ydl_opts.update({
             'format': 'bestaudio/best',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
-                'preferredquality': '192',
+                'preferredquality': str(bitrate),
             }],
         })
     else:

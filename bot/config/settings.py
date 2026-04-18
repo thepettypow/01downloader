@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     ytdlp_retries: int = 3
     ytdlp_skip_youtubetab_authcheck: bool = True
     ytdlp_playlist_end: int = 1
+    ytdlp_overall_timeout: int = 1800
 
     class Config:
         env_file = ".env"

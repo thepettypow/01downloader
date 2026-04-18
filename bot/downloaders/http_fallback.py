@@ -9,6 +9,10 @@ from bot.config.settings import config
 def _ffmpeg_fix_mp4(input_path: str, output_path: str) -> None:
     cmd = [
         "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostats",
         "-y",
         "-i",
         input_path,

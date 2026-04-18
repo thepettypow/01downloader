@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 import shutil
@@ -88,14 +89,26 @@ async def process_download_choice(callback: CallbackQuery):
     try:
         await callback.message.edit_text(get_text(lang, 'downloading'))
 
-        force_document = action == 'document'
         max_height = None
-        requested_mode = 'audio' if action == 'audio' else 'video'
+        audio_bitrate_kbps = None
+        requested_mode = 'video'
+        if action == 'video':
+            requested_mode = 'video'
+        elif action == 'audio':
+            requested_mode = 'audio'
+            audio_bitrate_kbps = 192
         if action.startswith('video_'):
             requested_mode = 'video'
             suffix = action.split('_', 1)[1]
             if suffix.isdigit():
                 max_height = int(suffix)
+        elif action.startswith('audio_'):
+            requested_mode = 'audio'
+            suffix = action.split('_', 1)[1]
+            if suffix.isdigit():
+                audio_bitrate_kbps = int(suffix)
+            else:
+                audio_bitrate_kbps = 320
 
         if 'spotify.com' in url:
             result = await download_spotify(url)
@@ -104,7 +117,14 @@ async def process_download_choice(callback: CallbackQuery):
             result = await download_direct_file(url)
             download_type = 'audio' if url.endswith('.mp3') else 'video'
         else:
-            result = await download_media(url, requested_mode, max_height=max_height)
+            try:
+                result = await asyncio.wait_for(
+                    download_media(url, requested_mode, max_height=max_height, audio_bitrate_kbps=audio_bitrate_kbps),
+                    timeout=int(getattr(config, "ytdlp_overall_timeout", 1800)),
+                )
+            except asyncio.TimeoutError:
+                await callback.message.edit_text(get_text(lang, 'error', error="Download timed out. Try a lower quality."))
+                return
             download_type = requested_mode
 
         if not result['success']:
@@ -124,9 +144,7 @@ async def process_download_choice(callback: CallbackQuery):
 
         try:
             media = FSInputFile(file_path)
-            if force_document:
-                await callback.message.answer_document(media, caption=title)
-            elif download_type == 'audio':
+            if download_type == 'audio':
                 await callback.message.answer_audio(media, caption=title)
             else:
                 ext = os.path.splitext(file_path)[1].lower()
@@ -135,7 +153,7 @@ async def process_download_choice(callback: CallbackQuery):
                 else:
                     await callback.message.answer_document(media, caption=title)
 
-            await log_download(user_id, url, download_type if not force_document else 'document')
+            await log_download(user_id, url, download_type)
             try:
                 await callback.message.delete()
             except Exception:
