@@ -20,8 +20,10 @@ class Settings(BaseSettings):
     ytdlp_overall_timeout: int = 1800
     telegram_request_timeout: int = 7200
     telegram_max_upload_bytes: int = 50 * 1024 * 1024
+    telegram_fallback_upload_bytes: int = 50 * 1024 * 1024
     telegram_hard_limit_bytes: int = 2000 * 1024 * 1024
     telegram_enable_compression: bool = True
+    telegram_delivery_mode: str = "chunk"
 
     class Config:
         env_file = ".env"

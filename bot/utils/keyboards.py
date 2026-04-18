@@ -1,5 +1,67 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+def _fmt_mb(size_bytes: int) -> str:
+    try:
+        if not size_bytes:
+            return ""
+        mb = float(size_bytes) / (1024.0 * 1024.0)
+        return f"~{mb:.2f}MB"
+    except Exception:
+        return ""
+
+def download_quality_menu(lang: str, pending_id: int, video_options: list[dict] | None, duration_s: int | None):
+    from bot.utils.locales import get_text
+    video_options = list(video_options or [])
+    video_options.sort(key=lambda x: int(x.get("height") or 0), reverse=True)
+
+    heights = [int(v.get("height") or 0) for v in video_options if v.get("height")]
+    recommended = 720 if 720 in heights else (480 if 480 in heights else (max(heights) if heights else 0))
+
+    audio_rates = [128, 192, 320]
+    audio_buttons = []
+    for kbps in audio_rates:
+        est = ""
+        if duration_s:
+            est_b = int((float(kbps) * 1000.0 / 8.0) * float(duration_s))
+            est = _fmt_mb(est_b)
+        text = f"⬇️ MP3 {kbps}"
+        if est:
+            text = f"{text}, {est}"
+        audio_buttons.append(InlineKeyboardButton(text=text, callback_data=f"dl:{pending_id}:audio_{kbps}"))
+    audio_buttons.append(InlineKeyboardButton(text="⬇️ MP3 Best", callback_data=f"dl:{pending_id}:audio_best"))
+
+    rows = []
+    max_rows = max(len(video_options), len(audio_buttons))
+    max_rows = min(max_rows, 6)
+    for i in range(max_rows):
+        left = None
+        if i < len(video_options):
+            v = video_options[i]
+            w = int(v.get("width") or 0)
+            h = int(v.get("height") or 0)
+            size = int(v.get("size_bytes") or 0)
+            label = f"⬇️ {w}x{h}" if w else f"⬇️ {h}p"
+            mb = _fmt_mb(size)
+            if mb:
+                label = f"{label}, {mb}"
+            if h and h == recommended:
+                label = f"⭐️ {label}"
+            left = InlineKeyboardButton(text=label, callback_data=f"dl:{pending_id}:video_{h}" if h else f"dl:{pending_id}:video_best")
+
+        right = audio_buttons[i] if i < len(audio_buttons) else None
+        row = []
+        if left:
+            row.append(left)
+        if right:
+            row.append(right)
+        if row:
+            rows.append(row)
+
+    rows.append([InlineKeyboardButton(text=get_text(lang, "btn_video_best"), callback_data=f"dl:{pending_id}:video_best")])
+    rows.append([InlineKeyboardButton(text=get_text(lang, "btn_cancel"), callback_data=f"dl:{pending_id}:cancel")])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 def main_menu_inline(lang: str = 'en'):
     from bot.utils.locales import get_text
     keyboard = InlineKeyboardMarkup(

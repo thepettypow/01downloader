@@ -20,6 +20,10 @@ async def download_media(
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _download_sync, url, mode, max_height, audio_bitrate_kbps, status)
 
+async def probe_media(url: str) -> dict:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _probe_sync, url)
+
 def _find_downloaded_file(prefix: str) -> str | None:
     try:
         candidates = []
@@ -64,7 +68,128 @@ def _is_youtubetab_authcheck_error(msg: str) -> bool:
 def _run_ffmpeg(cmd: list[str], timeout_s: int | None) -> None:
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, check=True, timeout=timeout_s)
 
+def _probe_video_height(path: str) -> int | None:
+    try:
+        cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=height",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            path,
+        ]
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15, check=True)
+        out = (p.stdout or "").strip()
+        if out.isdigit():
+            return int(out)
+    except Exception:
+        return None
+    return None
+
+def _estimate_bytes(duration: int | float | None, tbr: int | float | None) -> int | None:
+    try:
+        if not duration or not tbr:
+            return None
+        bits = float(duration) * float(tbr) * 1000.0
+        return int(bits / 8.0)
+    except Exception:
+        return None
+
+def _probe_sync(url: str) -> dict:
+    ydl_opts: dict = {
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "age_limit": 18,
+    }
+
+    remote_components = (getattr(config, "ytdlp_remote_components", "") or "").strip()
+    if remote_components:
+        ydl_opts["remote_components"] = {c.strip() for c in remote_components.split(",") if c.strip()}
+    ydl_opts["js_runtimes"] = {"deno": {}}
+    ydl_opts["socket_timeout"] = getattr(config, "ytdlp_socket_timeout", 20)
+    ydl_opts["retries"] = getattr(config, "ytdlp_retries", 3)
+    ydl_opts["fragment_retries"] = getattr(config, "ytdlp_retries", 3)
+    playlist_end = int(getattr(config, "ytdlp_playlist_end", 1) or 0)
+    if playlist_end > 0:
+        ydl_opts["playlistend"] = playlist_end
+    if getattr(config, "ytdlp_skip_youtubetab_authcheck", True):
+        _merge_extractor_args(ydl_opts, {"youtubetab": {"skip": ["authcheck"]}})
+    if getattr(config, "ytdlp_force_ipv4", False):
+        ydl_opts["source_address"] = "0.0.0.0"
+
+    proxy = (config.ytdlp_proxy or "").strip()
+    if proxy:
+        ydl_opts["proxy"] = proxy
+    user_agent = (config.ytdlp_user_agent or "").strip()
+    if user_agent:
+        ydl_opts["user_agent"] = user_agent
+
+    if "pornhub.com" in (url or ""):
+        ydl_opts["geo_bypass"] = True
+        headers = dict(ydl_opts.get("http_headers") or {})
+        headers.update({
+            "Referer": "https://www.pornhub.com/",
+            "Origin": "https://www.pornhub.com",
+        })
+        if user_agent:
+            headers.setdefault("User-Agent", user_agent)
+        ydl_opts["http_headers"] = headers
+        ydl_opts["retries"] = max(int(ydl_opts.get("retries") or 0), 5)
+        ydl_opts["fragment_retries"] = max(int(ydl_opts.get("fragment_retries") or 0), 5)
+        ydl_opts.setdefault("sleep_interval", 1)
+        ydl_opts.setdefault("max_sleep_interval", 5)
+        ydl_opts.setdefault("concurrent_fragment_downloads", 4)
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        duration = info.get("duration") or 0
+        formats = info.get("formats") or []
+        by_height: dict[int, dict] = {}
+        for f in formats:
+            if f.get("vcodec") in (None, "none"):
+                continue
+            h = f.get("height")
+            if not h:
+                continue
+            try:
+                h_int = int(h)
+            except Exception:
+                continue
+            cur = by_height.get(h_int)
+            tbr = f.get("tbr") or 0
+            if not cur or float(tbr or 0) > float(cur.get("tbr") or 0):
+                by_height[h_int] = f
+
+        video_options = []
+        for h, f in sorted(by_height.items(), key=lambda x: x[0], reverse=True):
+            size = f.get("filesize") or f.get("filesize_approx") or _estimate_bytes(duration, f.get("tbr"))
+            video_options.append({
+                "height": h,
+                "width": f.get("width") or 0,
+                "size_bytes": int(size) if size else 0,
+            })
+
+        return {
+            "success": True,
+            "title": info.get("title") or "Media",
+            "duration": duration,
+            "video_options": video_options,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 def _ffmpeg_transcode_telegram_mp4(input_path: str, output_path: str, max_height: int | None) -> None:
+    if max_height:
+        h0 = _probe_video_height(input_path)
+        if h0 and int(h0) <= int(max_height):
+            max_height = None
+
     base = [
         "ffmpeg",
         "-hide_banner",
@@ -77,6 +202,25 @@ def _ffmpeg_transcode_telegram_mp4(input_path: str, output_path: str, max_height
     ]
     timeout_s = int(getattr(config, "ytdlp_overall_timeout", 1800) or 1800)
     if not max_height:
+        try:
+            cmd = [
+                *base,
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a:0?",
+                "-c",
+                "copy",
+                "-movflags",
+                "+faststart",
+                output_path,
+            ]
+            _run_ffmpeg(cmd, timeout_s=timeout_s)
+            return
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
         try:
             cmd = [
                 *base,
@@ -178,6 +322,22 @@ def _download_sync(url: str, mode: str, max_height: int | None, audio_bitrate_kb
     user_agent = (config.ytdlp_user_agent or "").strip()
     if user_agent:
         ydl_opts['user_agent'] = user_agent
+
+    if "pornhub.com" in (url or ""):
+        ydl_opts["geo_bypass"] = True
+        headers = dict(ydl_opts.get("http_headers") or {})
+        headers.update({
+            "Referer": "https://www.pornhub.com/",
+            "Origin": "https://www.pornhub.com",
+        })
+        if user_agent:
+            headers.setdefault("User-Agent", user_agent)
+        ydl_opts["http_headers"] = headers
+        ydl_opts["retries"] = max(int(ydl_opts.get("retries") or 0), 5)
+        ydl_opts["fragment_retries"] = max(int(ydl_opts.get("fragment_retries") or 0), 5)
+        ydl_opts.setdefault("sleep_interval", 1)
+        ydl_opts.setdefault("max_sleep_interval", 5)
+        ydl_opts.setdefault("concurrent_fragment_downloads", 4)
     
     if mode == 'audio':
         bitrate = int(audio_bitrate_kbps or 192)

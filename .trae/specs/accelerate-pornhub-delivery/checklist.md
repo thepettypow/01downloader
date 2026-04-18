@@ -1,0 +1,9 @@
+- [x] Pornhub link downloads successfully with the new defaults (no manual headers needed)
+- [x] Typical Pornhub 480p/720p finishes fast-path without full re-encode when possible
+- [x] Delivered MP4 is streamable in Telegram (supports_streaming + faststart)
+- [x] Upload failures trigger retry and then fallback strategy (no infinite “Downloading…”)
+- [x] Oversize files (> telegram_max_upload_bytes) are compressed when enabled
+- [x] If still oversize, chunked delivery sends all parts and cleans up temp files
+- [x] 2GB hard cap is enforced with a clear user-facing error
+- [x] Config works via .env / docker-compose environment variables
+- [x] Quality menu shows per-link video resolutions with estimated sizes and a recommended option
