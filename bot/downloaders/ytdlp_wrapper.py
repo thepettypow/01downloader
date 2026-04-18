@@ -33,6 +33,11 @@ def _download_sync(url: str, mode: str) -> dict:
         ydl_opts["remote_components"] = {c.strip() for c in remote_components.split(",") if c.strip()}
 
     ydl_opts["js_runtimes"] = {"deno": {}}
+    ydl_opts["socket_timeout"] = getattr(config, "ytdlp_socket_timeout", 20)
+    ydl_opts["retries"] = getattr(config, "ytdlp_retries", 3)
+    ydl_opts["fragment_retries"] = getattr(config, "ytdlp_retries", 3)
+    if getattr(config, "ytdlp_force_ipv4", True):
+        ydl_opts["source_address"] = "0.0.0.0"
     cookie_file = (config.ytdlp_cookie_file or "").strip()
     cookie_candidates = []
     if cookie_file:

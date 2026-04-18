@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     ytdlp_proxy: Optional[str] = None
     ytdlp_user_agent: Optional[str] = None
     ytdlp_remote_components: str = "ejs:github"
+    ytdlp_force_ipv4: bool = True
+    ytdlp_socket_timeout: int = 20
+    ytdlp_retries: int = 3
 
     class Config:
         env_file = ".env"
