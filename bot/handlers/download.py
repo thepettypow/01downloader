@@ -2,9 +2,17 @@ import os
 import re
 import shutil
 from aiogram import Router, F
-from aiogram.types import Message, FSInputFile
-from bot.models.database import get_user_language, log_download, check_rate_limit, get_user_mode
+from aiogram.types import Message, FSInputFile, CallbackQuery
+from bot.models.database import (
+    get_user_language,
+    log_download,
+    check_rate_limit,
+    create_pending_download,
+    get_pending_download,
+    delete_pending_download,
+)
 from bot.utils.locales import get_text
+from bot.utils.keyboards import download_choice_menu
 from bot.utils.queue_manager import queue_manager
 from bot.config.settings import config
 from bot.downloaders.ytdlp_wrapper import download_media
@@ -23,69 +31,115 @@ async def process_url(message: Message):
     urls = URL_REGEX.findall(message.text)
     if not urls:
         return
-        
-    mode = await get_user_mode(user_id)
     
     for url in urls:
-        if not await check_rate_limit(user_id, config.daily_limit):
-            await message.reply(get_text(lang, 'rate_limit', limit=config.daily_limit))
-            break
-            
-        position = await queue_manager.acquire()
-        msg = await message.reply(get_text(lang, 'queued', position=position))
-        
-        await queue_manager.wait_and_acquire()
-        
+        pending_id = await create_pending_download(user_id, url)
+        await message.reply(
+            get_text(lang, 'choose_format'),
+            reply_markup=download_choice_menu(lang, pending_id)
+        )
+
+@router.callback_query(F.data.startswith('dl:'))
+async def process_download_choice(callback: CallbackQuery):
+    parts = (callback.data or "").split(':', 2)
+    if len(parts) != 3:
+        await callback.answer()
+        return
+
+    try:
+        pending_id = int(parts[1])
+    except ValueError:
+        await callback.answer()
+        return
+
+    action = parts[2]
+    user_id = callback.from_user.id
+    lang = await get_user_language(user_id)
+
+    row = await get_pending_download(pending_id)
+    if not row:
+        await callback.answer(get_text(lang, 'invalid_request'), show_alert=True)
+        return
+
+    owner_user_id, url = row
+    if owner_user_id != user_id:
+        await callback.answer(get_text(lang, 'invalid_request'), show_alert=True)
+        return
+
+    await delete_pending_download(pending_id)
+
+    if action == 'cancel':
         try:
-            await msg.edit_text(get_text(lang, 'downloading'))
-            
-            # Determine which downloader to use
-            if 'spotify.com' in url:
-                result = await download_spotify(url)
-                download_type = 'audio'
-            elif url.endswith('.mp3') or url.endswith('.mp4'):
-                result = await download_direct_file(url)
-                download_type = 'audio' if url.endswith('.mp3') else 'video'
+            await callback.message.edit_text(get_text(lang, 'cancelled'))
+        except Exception:
+            pass
+        await callback.answer()
+        return
+
+    if not await check_rate_limit(user_id, config.daily_limit):
+        await callback.answer(get_text(lang, 'rate_limit', limit=config.daily_limit), show_alert=True)
+        return
+
+    position = await queue_manager.acquire()
+    await callback.answer()
+    await callback.message.edit_text(get_text(lang, 'queued', position=position))
+
+    await queue_manager.wait_and_acquire()
+    try:
+        await callback.message.edit_text(get_text(lang, 'downloading'))
+
+        force_document = action == 'document'
+        requested_mode = 'audio' if action == 'audio' else 'video'
+
+        if 'spotify.com' in url:
+            result = await download_spotify(url)
+            download_type = 'audio'
+        elif url.endswith('.mp3') or url.endswith('.mp4'):
+            result = await download_direct_file(url)
+            download_type = 'audio' if url.endswith('.mp3') else 'video'
+        else:
+            result = await download_media(url, requested_mode)
+            download_type = requested_mode
+
+        if not result['success']:
+            if not 'spotify.com' in url and not url.endswith(('.mp3', '.mp4')):
+                fallback_result = await download_direct_file(url)
+                if fallback_result['success']:
+                    result = fallback_result
+                    download_type = 'audio' if result['file_path'].endswith('.mp3') else 'video'
+
+            if not result.get('success'):
+                await callback.message.edit_text(get_text(lang, 'error', error=result.get('error', 'Unknown Error')))
+                return
+
+        file_path = result['file_path']
+        title = result.get('title', 'Media')
+        dir_to_clean = result.get('dir_to_clean')
+
+        try:
+            media = FSInputFile(file_path)
+            if force_document:
+                await callback.message.answer_document(media, caption=title)
+            elif download_type == 'audio':
+                await callback.message.answer_audio(media, caption=title)
             else:
-                result = await download_media(url, mode)
-                download_type = mode
-            
-            if not result['success']:
-                # Fallback to direct HTTP download if yt-dlp fails and looks like a media link
-                if not 'spotify.com' in url and not url.endswith(('.mp3', '.mp4')):
-                    fallback_result = await download_direct_file(url)
-                    if fallback_result['success']:
-                        result = fallback_result
-                        download_type = 'audio' if result['file_path'].endswith('.mp3') else 'video'
-                
-                if not result.get('success'):
-                    await msg.edit_text(get_text(lang, 'error', error=result.get('error', 'Unknown Error')))
-                    continue
-                
-            file_path = result['file_path']
-            title = result.get('title', 'Media')
-            dir_to_clean = result.get('dir_to_clean')
-            
-            try:
-                if download_type == 'audio':
-                    media = FSInputFile(file_path)
-                    await message.reply_audio(media, caption=title)
+                ext = os.path.splitext(file_path)[1].lower()
+                if ext in ('.mp4', '.m4v', '.mov'):
+                    await callback.message.answer_video(media, caption=title)
                 else:
-                    media = FSInputFile(file_path)
-                    ext = os.path.splitext(file_path)[1].lower()
-                    if ext in ('.mp4', '.m4v', '.mov'):
-                        await message.reply_video(media, caption=title)
-                    else:
-                        await message.reply_document(media, caption=title)
-                    
-                await log_download(user_id, url, download_type)
-                await msg.delete()
-            except Exception as e:
-                await msg.edit_text(get_text(lang, 'error', error=str(e)))
-            finally:
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                if dir_to_clean and os.path.exists(dir_to_clean):
-                    shutil.rmtree(dir_to_clean, ignore_errors=True)
+                    await callback.message.answer_document(media, caption=title)
+
+            await log_download(user_id, url, download_type if not force_document else 'document')
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+        except Exception as e:
+            await callback.message.edit_text(get_text(lang, 'error', error=str(e)))
         finally:
-            queue_manager.release()
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            if dir_to_clean and os.path.exists(dir_to_clean):
+                shutil.rmtree(dir_to_clean, ignore_errors=True)
+    finally:
+        queue_manager.release()

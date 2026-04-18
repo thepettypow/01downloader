@@ -2,6 +2,7 @@ LOCALES = {
     'en': {
         'welcome': "ID: {user_id}\n\nFree Account\n\nI can extract and download photos/images/audio/files/archives from YouTube, Instagram, TikTok, Facebook, SoundCloud, Vimeo, VK, Twitter posts and 1000+ audio/video hosts for you. Just send me a URL.",
         'help': "ℹ️ Supported sites: YouTube, Instagram, TikTok, Twitter, Spotify, SoundCloud, Pornhub, XVideos, VK, Vimeo, and direct MP3 links.\n\nJust send a link!",
+        'choose_format': "Choose output type:",
         'downloading': "⏳ Downloading... Please wait.",
         'error': "❌ An error occurred: {error}",
         'unsupported': "❌ Unsupported link.",
@@ -26,10 +27,15 @@ LOCALES = {
         'btn_lang_fa': "🇮🇷 فارسی",
         'btn_video': "🎬 Video",
         'btn_audio': "🎵 Audio",
+        'btn_document': "📄 Document",
+        'btn_cancel': "❌ Cancel",
+        'cancelled': "Cancelled.",
+        'invalid_request': "This request is no longer valid.",
     },
     'fa': {
         'welcome': "ID: {user_id}\n\nحساب رایگان\n\nمن می‌توانم برای شما عکس‌ها/تصاویر/صوت/فایل‌ها/آرشیوها را از یوتیوب، اینستاگرام، تیک‌تاک، فیسبوک، ساندکلود، ویمئو، VK، پست‌های توییتر و 1000+ هاست صوتی/ویدیویی استخراج و دانلود کنم. فقط یک URL به من ارسال کنید.",
         'help': "ℹ️ سایت‌های پشتیبانی شده: YouTube, Instagram, TikTok, Twitter, Spotify, SoundCloud, Pornhub, XVideos, VK, Vimeo و لینک‌های مستقیم MP3.\n\nفقط یک لینک بفرستید!",
+        'choose_format': "نوع خروجی را انتخاب کنید:",
         'downloading': "⏳ در حال دانلود... لطفا صبر کنید.",
         'error': "❌ خطایی رخ داد: {error}",
         'unsupported': "❌ لینک پشتیبانی نمی‌شود.",
@@ -54,6 +60,10 @@ LOCALES = {
         'btn_lang_fa': "🇮🇷 فارسی",
         'btn_video': "🎬 ویدیو",
         'btn_audio': "🎵 صدا",
+        'btn_document': "📄 فایل",
+        'btn_cancel': "❌ لغو",
+        'cancelled': "لغو شد.",
+        'invalid_request': "این درخواست دیگر معتبر نیست.",
     }
 }
 

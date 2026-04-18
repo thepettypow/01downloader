@@ -38,3 +38,18 @@ def settings_menu(lang: str = 'en'):
             [InlineKeyboardButton(text="🔙", callback_data='menu_back')]
         ]
     )
+
+def download_choice_menu(lang: str, pending_id: int):
+    from bot.utils.locales import get_text
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=get_text(lang, 'btn_video'), callback_data=f'dl:{pending_id}:video'),
+                InlineKeyboardButton(text=get_text(lang, 'btn_audio'), callback_data=f'dl:{pending_id}:audio'),
+            ],
+            [
+                InlineKeyboardButton(text=get_text(lang, 'btn_document'), callback_data=f'dl:{pending_id}:document'),
+                InlineKeyboardButton(text=get_text(lang, 'btn_cancel'), callback_data=f'dl:{pending_id}:cancel'),
+            ],
+        ]
+    )

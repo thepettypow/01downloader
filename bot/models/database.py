@@ -22,6 +22,14 @@ async def init_db():
                 FOREIGN KEY(user_id) REFERENCES users(user_id)
             )
         ''')
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS pending_downloads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                url TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         await db.commit()
 
 async def get_user(user_id: int):
@@ -72,4 +80,20 @@ async def check_rate_limit(user_id: int, limit: int) -> bool:
 async def log_download(user_id: int, url: str, dl_type: str):
     async with aiosqlite.connect(config.db_path) as db:
         await db.execute('INSERT INTO downloads (user_id, url, type) VALUES (?, ?, ?)', (user_id, url, dl_type))
+        await db.commit()
+
+async def create_pending_download(user_id: int, url: str) -> int:
+    async with aiosqlite.connect(config.db_path) as db:
+        cursor = await db.execute('INSERT INTO pending_downloads (user_id, url) VALUES (?, ?)', (user_id, url))
+        await db.commit()
+        return cursor.lastrowid
+
+async def get_pending_download(pending_id: int):
+    async with aiosqlite.connect(config.db_path) as db:
+        async with db.execute('SELECT user_id, url FROM pending_downloads WHERE id = ?', (pending_id,)) as cursor:
+            return await cursor.fetchone()
+
+async def delete_pending_download(pending_id: int):
+    async with aiosqlite.connect(config.db_path) as db:
+        await db.execute('DELETE FROM pending_downloads WHERE id = ?', (pending_id,))
         await db.commit()
