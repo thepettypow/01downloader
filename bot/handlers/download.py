@@ -24,6 +24,7 @@ from bot.downloaders.spotdl_wrapper import download_spotify
 from bot.downloaders.http_fallback import download_direct_file
 from bot.utils.telegram_compress import compress_video_to_size, compress_audio_to_size
 from bot.utils.video_tools import probe_video, extract_thumbnail
+from bot.utils.audio_tools import probe_audio, extract_audio_cover
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -198,7 +199,8 @@ async def process_download_choice(callback: CallbackQuery):
                 await callback.message.edit_text(get_text(lang, 'error', error=result.get('error', 'Unknown Error')))
                 return
 
-        file_path = result['file_path']
+        spotify_files = result.get('file_paths')
+        file_path = result.get('file_path')
         title = result.get('title', 'Media')
         dir_to_clean = result.get('dir_to_clean')
         duration = result.get('duration')
@@ -209,6 +211,61 @@ async def process_download_choice(callback: CallbackQuery):
             pass
 
         try:
+            if 'spotify.com' in url and spotify_files:
+                loop = asyncio.get_event_loop()
+                cover_path = None
+                try:
+                    cover_path = os.path.join(config.download_dir, f"cover_{uuid.uuid4().hex}.jpg")
+                    await loop.run_in_executor(None, extract_audio_cover, spotify_files[0], cover_path)
+                    await callback.message.answer_photo(FSInputFile(cover_path), caption=title)
+                except Exception:
+                    cover_path = None
+                finally:
+                    if cover_path and os.path.exists(cover_path):
+                        try:
+                            os.remove(cover_path)
+                        except Exception:
+                            pass
+
+                for fp in spotify_files:
+                    meta = {}
+                    try:
+                        meta = await loop.run_in_executor(None, probe_audio, fp)
+                    except Exception:
+                        meta = {}
+                    performer = meta.get("artist")
+                    track_title = meta.get("title") or os.path.splitext(os.path.basename(fp))[0]
+                    d = meta.get("duration")
+                    duration_s = int(d) if d else None
+
+                    thumb_path = None
+                    try:
+                        thumb_path = os.path.join(config.download_dir, f"thumb_{uuid.uuid4().hex}.jpg")
+                        await loop.run_in_executor(None, extract_audio_cover, fp, thumb_path)
+                    except Exception:
+                        thumb_path = None
+
+                    try:
+                        kwargs = {"performer": performer, "title": track_title}
+                        if duration_s:
+                            kwargs["duration"] = duration_s
+                        if thumb_path and os.path.exists(thumb_path):
+                            kwargs["thumbnail"] = FSInputFile(thumb_path)
+                        await callback.message.answer_audio(FSInputFile(fp), **{k: v for k, v in kwargs.items() if v})
+                    finally:
+                        if thumb_path and os.path.exists(thumb_path):
+                            try:
+                                os.remove(thumb_path)
+                            except Exception:
+                                pass
+
+                await log_download(user_id, url, "audio")
+                try:
+                    await callback.message.delete()
+                except Exception:
+                    pass
+                return
+
             hard_limit = int(getattr(config, "telegram_hard_limit_bytes", 2000 * 1024 * 1024))
             max_upload = int(getattr(config, "telegram_max_upload_bytes", 50 * 1024 * 1024))
             fallback_upload = int(getattr(config, "telegram_fallback_upload_bytes", 50 * 1024 * 1024))
@@ -409,7 +466,7 @@ async def process_download_choice(callback: CallbackQuery):
             logger.exception("send failed")
             await callback.message.edit_text(get_text(lang, 'error', error=str(e)))
         finally:
-            if os.path.exists(file_path):
+            if file_path and os.path.exists(file_path):
                 os.remove(file_path)
             if dir_to_clean and os.path.exists(dir_to_clean):
                 shutil.rmtree(dir_to_clean, ignore_errors=True)

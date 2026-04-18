@@ -25,13 +25,13 @@ async def download_spotify(url: str) -> dict:
         stdout, stderr = await process.communicate()
         
         if process.returncode == 0:
-            files = os.listdir(unique_dir)
+            files = sorted([f for f in os.listdir(unique_dir) if f.lower().endswith(".mp3")])
             if files:
-                file_path = os.path.join(unique_dir, files[0])
+                file_paths = [os.path.join(unique_dir, f) for f in files]
                 return {
                     'success': True, 
-                    'file_path': file_path, 
-                    'title': files[0].replace('.mp3', ''), 
+                    'file_paths': file_paths,
+                    'title': os.path.splitext(files[0])[0], 
                     'dir_to_clean': unique_dir
                 }
         

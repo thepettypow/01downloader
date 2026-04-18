@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     telegram_hard_limit_bytes: int = 2000 * 1024 * 1024
     telegram_enable_compression: bool = True
     telegram_delivery_mode: str = "chunk"
+    download_retention_hours: int = 12
+    cleanup_interval_seconds: int = 3600
 
     class Config:
         env_file = ".env"
