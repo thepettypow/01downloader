@@ -19,7 +19,24 @@ def compress_video_to_size(
     prefer_height: int | None = None,
     timeout_s: int | None = None,
 ) -> str:
-    heights = [h for h in [prefer_height, 720, 480, 360, 240] if h]
+    base_heights = [720, 480, 360, 240]
+    heights: list[int] = []
+    if prefer_height:
+        try:
+            ph = int(prefer_height)
+            heights.append(ph)
+        except Exception:
+            pass
+    for h in base_heights:
+        if prefer_height:
+            try:
+                if int(h) > int(prefer_height):
+                    continue
+            except Exception:
+                pass
+        if h not in heights:
+            heights.append(int(h))
+
     audio_kbps_steps = [128, 96, 64]
     for height in heights:
         for audio_kbps in audio_kbps_steps:
@@ -41,7 +58,9 @@ def compress_video_to_size(
                 "-c:v",
                 "libx264",
                 "-preset",
-                "veryfast",
+                "ultrafast",
+                "-threads",
+                "0",
                 "-pix_fmt",
                 "yuv420p",
                 "-vf",
@@ -54,7 +73,7 @@ def compress_video_to_size(
                 "+faststart",
             ]
             if v_kbps is None:
-                cmd += ["-crf", "30"]
+                cmd += ["-crf", "28"]
             else:
                 cmd += ["-b:v", f"{v_kbps}k", "-maxrate", f"{v_kbps}k", "-bufsize", f"{v_kbps*2}k"]
             cmd.append(output_path)

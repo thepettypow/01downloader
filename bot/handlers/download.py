@@ -22,7 +22,6 @@ from bot.downloaders.ytdlp_wrapper import download_media, probe_media
 from bot.downloaders.spotdl_wrapper import download_spotify
 from bot.downloaders.http_fallback import download_direct_file
 from bot.utils.telegram_compress import compress_video_to_size, compress_audio_to_size
-from bot.utils.file_chunker import split_file
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -257,93 +256,118 @@ async def process_download_choice(callback: CallbackQuery):
                     timeout=int(getattr(config, "telegram_send_timeout", 120)),
                 )
 
-            async def send_as_parts():
+            async def compress_to_limit(target_bytes: int):
+                if not enable_compress:
+                    return
                 loop = asyncio.get_event_loop()
-                part_size = max(1, min(fallback_upload, hard_limit))
-                part_paths = await loop.run_in_executor(None, split_file, file_path, part_size, config.download_dir)
-                total = len(part_paths)
                 try:
-                    for i, part_path in enumerate(part_paths, start=1):
+                    current_size_local = os.path.getsize(file_path)
+                except Exception:
+                    current_size_local = 0
+                if not current_size_local or current_size_local <= target_bytes:
+                    return
+                started_c = asyncio.get_event_loop().time()
+                await callback.message.edit_text(get_text(lang, 'downloading') + "\n\ncompressing…")
+                compressed_path = os.path.join(config.download_dir, f"tg_{os.path.basename(file_path)}")
+                timeout_s = int(getattr(config, "telegram_compress_timeout", 180))
+                if download_type == "audio":
+                    fut = loop.run_in_executor(
+                        None,
+                        compress_audio_to_size,
+                        file_path,
+                        compressed_path,
+                        target_bytes,
+                        duration,
+                        timeout_s,
+                    )
+                else:
+                    fut = loop.run_in_executor(
+                        None,
+                        compress_video_to_size,
+                        file_path,
+                        compressed_path,
+                        target_bytes,
+                        duration,
+                        max_height,
+                        timeout_s,
+                    )
+                while True:
+                    try:
+                        await asyncio.wait_for(asyncio.shield(fut), timeout=10)
+                        break
+                    except asyncio.TimeoutError:
+                        elapsed = int(asyncio.get_event_loop().time() - started_c)
                         try:
-                            await callback.message.edit_text(get_text(lang, 'downloading') + f"\n\nuploading part {i}/{total}")
+                            await callback.message.edit_text(get_text(lang, 'downloading') + f"\n\ncompressing… {elapsed}s")
                         except Exception:
                             pass
-                        cap = f"{title} (part {i}/{total})"
-                        await callback.message.answer_document(FSInputFile(part_path), caption=cap)
-                finally:
-                    for p in part_paths:
-                        try:
-                            if os.path.exists(p):
-                                os.remove(p)
-                        except Exception:
-                            pass
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                return compressed_path
 
             try:
                 current_size = os.path.getsize(file_path)
             except Exception:
                 current_size = 0
             if current_size and current_size > max_upload:
-                if delivery_mode == "chunk":
-                    await send_as_parts()
-                else:
-                    raise RuntimeError("File exceeds upload limit")
-            else:
-                last_err = None
-                max_attempts = 3
-                for attempt in range(max_attempts):
-                    try:
-                        await send_once()
-                        last_err = None
-                        break
-                    except Exception as e:
-                        last_err = e
-                        if isinstance(e, asyncio.TimeoutError):
-                            if delivery_mode == "chunk":
-                                await send_as_parts()
-                                last_err = None
-                                break
-                            raise RuntimeError("Telegram upload timed out")
-                        if attempt == 0 and is_transient_upload_error(e) and enable_compress:
-                            loop = asyncio.get_event_loop()
-                            compressed_path = os.path.join(config.download_dir, f"tg_retry_{os.path.basename(file_path)}")
-                            try:
-                                await callback.message.edit_text(get_text(lang, 'downloading') + "\n\ncompressing…")
-                            except Exception:
-                                pass
-                            if download_type == "audio":
-                                await loop.run_in_executor(
-                                    None,
-                                    compress_audio_to_size,
-                                    file_path,
-                                    compressed_path,
-                                    fallback_upload,
-                                    duration,
-                                    int(getattr(config, "telegram_compress_timeout", 180)),
-                                )
-                            else:
-                                await loop.run_in_executor(
-                                    None,
-                                    compress_video_to_size,
-                                    file_path,
-                                    compressed_path,
-                                    fallback_upload,
-                                    duration,
-                                    max_height,
-                                    int(getattr(config, "telegram_compress_timeout", 180)),
-                                )
-                            if os.path.exists(file_path):
-                                os.remove(file_path)
-                            file_path = compressed_path
-                        if attempt < (max_attempts - 1) and is_transient_upload_error(e):
+                new_path = await compress_to_limit(max_upload)
+                if new_path:
+                    file_path = new_path
+
+            last_err = None
+            max_attempts = 3
+            for attempt in range(max_attempts):
+                try:
+                    await send_once()
+                    last_err = None
+                    break
+                except Exception as e:
+                    last_err = e
+                    if isinstance(e, asyncio.TimeoutError):
+                        raise RuntimeError("Telegram upload timed out")
+                    if "request entity too large" in str(e).lower():
+                        new_path = await compress_to_limit(fallback_upload)
+                        if new_path:
+                            file_path = new_path
                             await backoff_sleep(attempt)
                             continue
-                        if delivery_mode == "chunk":
-                            await send_as_parts()
-                            last_err = None
-                            break
-                        raise
-                if last_err is not None:
-                    raise last_err
+                    if attempt == 0 and is_transient_upload_error(e) and enable_compress:
+                        loop = asyncio.get_event_loop()
+                        compressed_path = os.path.join(config.download_dir, f"tg_retry_{os.path.basename(file_path)}")
+                        try:
+                            await callback.message.edit_text(get_text(lang, 'downloading') + "\n\ncompressing…")
+                        except Exception:
+                            pass
+                        if download_type == "audio":
+                            await loop.run_in_executor(
+                                None,
+                                compress_audio_to_size,
+                                file_path,
+                                compressed_path,
+                                fallback_upload,
+                                duration,
+                                int(getattr(config, "telegram_compress_timeout", 180)),
+                            )
+                        else:
+                            await loop.run_in_executor(
+                                None,
+                                compress_video_to_size,
+                                file_path,
+                                compressed_path,
+                                fallback_upload,
+                                duration,
+                                max_height,
+                                int(getattr(config, "telegram_compress_timeout", 180)),
+                            )
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                        file_path = compressed_path
+                    if attempt < (max_attempts - 1) and is_transient_upload_error(e):
+                        await backoff_sleep(attempt)
+                        continue
+                    raise
+            if last_err is not None:
+                raise last_err
 
             await log_download(user_id, url, download_type)
             try:
