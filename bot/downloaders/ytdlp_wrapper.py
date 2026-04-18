@@ -62,19 +62,32 @@ def _download_sync(url: str, mode: str) -> dict:
         })
         
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            if mode == 'audio':
-                file_path = os.path.join(config.download_dir, f'{file_id}.mp3')
-            else:
-                file_path = _find_downloaded_file(file_id) or ydl.prepare_filename(info)
-            
-            return {
-                'success': True,
-                'file_path': file_path,
-                'title': info.get('title', 'Unknown Title'),
-                'duration': info.get('duration', 0)
-            }
+        def run_download(opts: dict) -> tuple[dict, str]:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                if mode == 'audio':
+                    file_path = os.path.join(config.download_dir, f'{file_id}.mp3')
+                else:
+                    file_path = _find_downloaded_file(file_id) or ydl.prepare_filename(info)
+                return info, file_path
+
+        try:
+            info, file_path = run_download(ydl_opts)
+        except yt_dlp.utils.DownloadError as e:
+            msg = str(e)
+            if 'Requested format is not available' not in msg:
+                raise
+            fallback_opts = dict(ydl_opts)
+            fallback_opts.pop('merge_output_format', None)
+            fallback_opts['format'] = 'best'
+            info, file_path = run_download(fallback_opts)
+
+        return {
+            'success': True,
+            'file_path': file_path,
+            'title': info.get('title', 'Unknown Title'),
+            'duration': info.get('duration', 0)
+        }
     except Exception as e:
         return {
             'success': False,
