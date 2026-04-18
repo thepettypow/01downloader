@@ -118,10 +118,30 @@ async def process_download_choice(callback: CallbackQuery):
             download_type = 'audio' if url.endswith('.mp3') else 'video'
         else:
             try:
-                result = await asyncio.wait_for(
-                    download_media(url, requested_mode, max_height=max_height, audio_bitrate_kbps=audio_bitrate_kbps),
-                    timeout=int(getattr(config, "ytdlp_overall_timeout", 1800)),
+                download_task = asyncio.create_task(
+                    download_media(url, requested_mode, max_height=max_height, audio_bitrate_kbps=audio_bitrate_kbps)
                 )
+                started = asyncio.get_event_loop().time()
+
+                async def ticker():
+                    while not download_task.done():
+                        await asyncio.sleep(20)
+                        if download_task.done():
+                            break
+                        elapsed = int(asyncio.get_event_loop().time() - started)
+                        try:
+                            await callback.message.edit_text(f"{get_text(lang, 'downloading')}\n\n{elapsed}s")
+                        except Exception:
+                            pass
+
+                ticker_task = asyncio.create_task(ticker())
+                try:
+                    result = await asyncio.wait_for(
+                        download_task,
+                        timeout=int(getattr(config, "ytdlp_overall_timeout", 1800)),
+                    )
+                finally:
+                    ticker_task.cancel()
             except asyncio.TimeoutError:
                 await callback.message.edit_text(get_text(lang, 'error', error="Download timed out. Try a lower quality."))
                 return

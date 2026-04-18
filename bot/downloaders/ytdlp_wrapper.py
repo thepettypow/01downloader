@@ -52,12 +52,11 @@ def _is_youtubetab_authcheck_error(msg: str) -> bool:
     m = (msg or "").lower()
     return "playlists that require authentication" in m or "youtubetab:skip=authcheck" in m
 
+def _run_ffmpeg(cmd: list[str]) -> None:
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, check=True)
+
 def _ffmpeg_transcode_telegram_mp4(input_path: str, output_path: str, max_height: int | None) -> None:
-    vf = "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p"
-    if max_height:
-        h = int(max_height)
-        vf = f"scale=-2:trunc(min({h}\\,ih)/2)*2,format=yuv420p"
-    cmd = [
+    base = [
         "ffmpeg",
         "-hide_banner",
         "-loglevel",
@@ -66,6 +65,37 @@ def _ffmpeg_transcode_telegram_mp4(input_path: str, output_path: str, max_height
         "-y",
         "-i",
         input_path,
+    ]
+    if not max_height:
+        try:
+            cmd = [
+                *base,
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a:0?",
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-movflags",
+                "+faststart",
+                output_path,
+            ]
+            _run_ffmpeg(cmd)
+            return
+        except subprocess.CalledProcessError:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    vf = "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p"
+    if max_height:
+        h = int(max_height)
+        vf = f"scale=-2:trunc(min({h}\\,ih)/2)*2,format=yuv420p"
+    cmd = [
+        *base,
         "-map",
         "0:v:0",
         "-map",
@@ -88,7 +118,7 @@ def _ffmpeg_transcode_telegram_mp4(input_path: str, output_path: str, max_height
         "+faststart",
         output_path,
     ]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, check=True)
+    _run_ffmpeg(cmd)
 
 def _download_sync(url: str, mode: str, max_height: int | None, audio_bitrate_kbps: int | None) -> dict:
     os.makedirs(config.download_dir, exist_ok=True)
@@ -99,7 +129,6 @@ def _download_sync(url: str, mode: str, max_height: int | None, audio_bitrate_kb
         'quiet': True,
         'no_warnings': True,
         'noprogress': True,
-        'max_filesize': 2000000000, # 2GB
     }
     remote_components = (getattr(config, "ytdlp_remote_components", "") or "").strip()
     if remote_components:
