@@ -56,7 +56,7 @@ def _ffmpeg_transcode_telegram_mp4(input_path: str, output_path: str, max_height
     vf = "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p"
     if max_height:
         h = int(max_height)
-        vf = f"scale=-2:trunc(min({h},ih)/2)*2,format=yuv420p"
+        vf = f"scale=-2:trunc(min({h}\\,ih)/2)*2,format=yuv420p"
     cmd = [
         "ffmpeg",
         "-hide_banner",
