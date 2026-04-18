@@ -93,6 +93,11 @@ def _download_sync(url: str, mode: str) -> dict:
     else:
         ydl_opts.update({
             'format': 'bv*+ba/best',
+            'merge_output_format': 'mp4',
+            'postprocessors': [{
+                'key': 'FFmpegVideoRemuxer',
+                'preferedformat': 'mp4',
+            }],
         })
         
     try:
