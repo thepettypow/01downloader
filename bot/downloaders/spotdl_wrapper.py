@@ -11,8 +11,11 @@ async def download_spotify(url: str) -> dict:
     os.makedirs(unique_dir, exist_ok=True)
     
     try:
+        spotdl_bin = "/opt/spotdl/bin/spotdl"
+        if not os.path.exists(spotdl_bin):
+            spotdl_bin = "spotdl"
         process = await asyncio.create_subprocess_exec(
-            "spotdl", "download", url,
+            spotdl_bin, "download", url,
             "--output", f"{unique_dir}/{{title}} - {{artist}}.{{ext}}",
             "--format", "mp3",
             stdout=asyncio.subprocess.PIPE,

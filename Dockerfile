@@ -10,6 +10,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+RUN python -m venv /opt/spotdl && \
+    /opt/spotdl/bin/pip install --no-cache-dir --upgrade pip && \
+    /opt/spotdl/bin/pip install --no-cache-dir spotdl
+
 COPY . .
 
 CMD ["python", "-m", "bot.main"]
