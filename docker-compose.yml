@@ -9,3 +9,6 @@ services:
       - BOT_TOKEN=${BOT_TOKEN}
       - ADMIN_IDS=${ADMIN_IDS}
       - DB_PATH=/app/data/bot.db
+      - YTDLP_COOKIE_FILE=${YTDLP_COOKIE_FILE}
+      - YTDLP_PROXY=${YTDLP_PROXY}
+      - YTDLP_USER_AGENT=${YTDLP_USER_AGENT}

@@ -19,6 +19,15 @@ def _download_sync(url: str, mode: str) -> dict:
         'no_warnings': True,
         'max_filesize': 2000000000, # 2GB
     }
+    cookie_file = (config.ytdlp_cookie_file or "").strip()
+    if cookie_file and os.path.exists(cookie_file):
+        ydl_opts['cookiefile'] = cookie_file
+    proxy = (config.ytdlp_proxy or "").strip()
+    if proxy:
+        ydl_opts['proxy'] = proxy
+    user_agent = (config.ytdlp_user_agent or "").strip()
+    if user_agent:
+        ydl_opts['user_agent'] = user_agent
     
     if mode == 'audio':
         ydl_opts.update({

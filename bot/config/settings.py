@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     download_dir: str = "downloads"
     max_concurrent_downloads: int = 4
     daily_limit: int = 50
+    ytdlp_cookie_file: Optional[str] = None
+    ytdlp_proxy: Optional[str] = None
+    ytdlp_user_agent: Optional[str] = None
 
     class Config:
         env_file = ".env"

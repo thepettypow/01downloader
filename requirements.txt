@@ -1,6 +1,6 @@
 aiogram==3.4.1
-yt-dlp>=2023.11.16,<2024.0.0
-spotdl==4.2.4
+yt-dlp>=2024.3.10
+spotdl>=4.2.4
 aiohttp==3.9.3
 aiofiles==23.2.1
 aiosqlite==0.20.0
