@@ -20,8 +20,16 @@ def _download_sync(url: str, mode: str) -> dict:
         'max_filesize': 2000000000, # 2GB
     }
     cookie_file = (config.ytdlp_cookie_file or "").strip()
-    if cookie_file and os.path.exists(cookie_file):
-        ydl_opts['cookiefile'] = cookie_file
+    cookie_candidates = []
+    if cookie_file:
+        cookie_candidates.append(cookie_file)
+        cookie_candidates.append(os.path.join("/app/data", os.path.basename(cookie_file)))
+    cookie_candidates.append("/app/data/cookies.txt")
+    cookie_candidates.append("data/cookies.txt")
+    for candidate in cookie_candidates:
+        if candidate and os.path.exists(candidate):
+            ydl_opts['cookiefile'] = candidate
+            break
     proxy = (config.ytdlp_proxy or "").strip()
     if proxy:
         ydl_opts['proxy'] = proxy
