@@ -144,6 +144,7 @@ def _download_sync(url: str, mode: str, max_height: int | None, audio_bitrate_kb
         'quiet': True,
         'no_warnings': True,
         'noprogress': True,
+        'age_limit': 18,
     }
     remote_components = (getattr(config, "ytdlp_remote_components", "") or "").strip()
     if remote_components:
@@ -191,9 +192,9 @@ def _download_sync(url: str, mode: str, max_height: int | None, audio_bitrate_kb
     else:
         if max_height:
             h = int(max_height)
-            video_format = f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best"
+            video_format = f"bestvideo[height<={h}][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[height<={h}][ext=mp4]/best[height<={h}]/best"
         else:
-            video_format = 'bv*+ba/best'
+            video_format = 'bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best'
         ydl_opts.update({
             'format': video_format,
         })

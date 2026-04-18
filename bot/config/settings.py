@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     ytdlp_skip_youtubetab_authcheck: bool = True
     ytdlp_playlist_end: int = 1
     ytdlp_overall_timeout: int = 1800
+    telegram_request_timeout: int = 7200
 
     class Config:
         env_file = ".env"

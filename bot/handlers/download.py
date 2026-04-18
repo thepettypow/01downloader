@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import re
 import shutil
@@ -21,8 +22,17 @@ from bot.downloaders.spotdl_wrapper import download_spotify
 from bot.downloaders.http_fallback import download_direct_file
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 URL_REGEX = re.compile(r'https?://[^\s]+')
+
+def _sanitize_url(url: str) -> str:
+    u = (url or "").strip()
+    u = u.strip("`'\"<>[]()")
+    u = u.lstrip("`'\"<>[]()")
+    while u and u[-1] in ("`", "'", "\"", ">", "]", ")", ".", ",", ";", ":"):
+        u = u[:-1]
+    return u
 
 @router.message(F.text.regexp(r'https?://[^\s]+'))
 async def process_url(message: Message):
@@ -34,7 +44,10 @@ async def process_url(message: Message):
         return
     
     for url in urls:
-        pending_id = await create_pending_download(user_id, url)
+        clean_url = _sanitize_url(url)
+        if not clean_url:
+            continue
+        pending_id = await create_pending_download(user_id, clean_url)
         await message.reply(
             get_text(lang, 'choose_format'),
             reply_markup=download_choice_menu(lang, pending_id)
@@ -66,6 +79,7 @@ async def process_download_choice(callback: CallbackQuery):
     if owner_user_id != user_id:
         await callback.answer(get_text(lang, 'invalid_request'), show_alert=True)
         return
+    url = _sanitize_url(url)
 
     await delete_pending_download(pending_id)
 
@@ -175,6 +189,11 @@ async def process_download_choice(callback: CallbackQuery):
         file_path = result['file_path']
         title = result.get('title', 'Media')
         dir_to_clean = result.get('dir_to_clean')
+        try:
+            size = os.path.getsize(file_path)
+            logger.info("sending file=%s bytes=%s", file_path, size)
+        except Exception:
+            pass
 
         try:
             media = FSInputFile(file_path)
