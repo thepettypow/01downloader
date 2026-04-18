@@ -1,8 +1,11 @@
 import asyncio
+import logging
 import os
 import uuid
 import shutil
 from bot.config.settings import config
+
+logger = logging.getLogger(__name__)
 
 async def download_spotify(url: str) -> dict:
     os.makedirs(config.download_dir, exist_ok=True)
@@ -35,10 +38,18 @@ async def download_spotify(url: str) -> dict:
                     'dir_to_clean': unique_dir
                 }
         
+        err = (stderr.decode('utf-8', errors='ignore') if stderr else '') or ''
+        out = (stdout.decode('utf-8', errors='ignore') if stdout else '') or ''
+        logger.error("spotdl failed rc=%s url=%s stderr=%s", process.returncode, url, err.strip()[:2000])
+
         # Cleanup on failure
         shutil.rmtree(unique_dir, ignore_errors=True)
-        return {'success': False, 'error': stderr.decode('utf-8') or 'Spotify download failed'}
+        msg = (err or out or 'Spotify download failed').strip()
+        if "client id" in msg.lower() or "client secret" in msg.lower() or "spotipy" in msg.lower():
+            msg = msg + "\n\nSet SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET in your environment."
+        return {'success': False, 'error': msg}
     
     except Exception as e:
+        logger.exception("spotdl exception url=%s", url)
         shutil.rmtree(unique_dir, ignore_errors=True)
         return {'success': False, 'error': str(e)}

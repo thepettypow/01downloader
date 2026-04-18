@@ -31,6 +31,99 @@ logger = logging.getLogger(__name__)
 
 URL_REGEX = re.compile(r'https?://[^\s]+')
 
+async def _send_spotify_result(message: Message, lang: str, user_id: int, url: str, result: dict):
+    spotify_files = result.get('file_paths') or []
+    title = result.get('title', 'Media')
+    dir_to_clean = result.get('dir_to_clean')
+    cover_path = None
+    try:
+        if not spotify_files:
+            await message.answer(get_text(lang, 'error', error="Spotify download returned no files"))
+            return
+
+        loop = asyncio.get_event_loop()
+        try:
+            cover_path = os.path.join(config.download_dir, f"cover_{uuid.uuid4().hex}.jpg")
+            await loop.run_in_executor(None, extract_audio_cover, spotify_files[0], cover_path)
+            await message.answer_photo(FSInputFile(cover_path), caption=title)
+        except Exception:
+            cover_path = None
+
+        for fp in spotify_files:
+            meta = {}
+            try:
+                meta = await loop.run_in_executor(None, probe_audio, fp)
+            except Exception:
+                meta = {}
+            performer = meta.get("artist")
+            track_title = meta.get("title") or os.path.splitext(os.path.basename(fp))[0]
+            d = meta.get("duration")
+            duration_s = int(d) if d else None
+
+            thumb_path = None
+            try:
+                thumb_path = os.path.join(config.download_dir, f"thumb_{uuid.uuid4().hex}.jpg")
+                await loop.run_in_executor(None, extract_audio_cover, fp, thumb_path)
+            except Exception:
+                thumb_path = None
+
+            try:
+                kwargs = {"performer": performer, "title": track_title}
+                if duration_s:
+                    kwargs["duration"] = duration_s
+                if thumb_path and os.path.exists(thumb_path):
+                    kwargs["thumbnail"] = FSInputFile(thumb_path)
+                await message.answer_audio(FSInputFile(fp), **{k: v for k, v in kwargs.items() if v})
+            finally:
+                if thumb_path and os.path.exists(thumb_path):
+                    try:
+                        os.remove(thumb_path)
+                    except Exception:
+                        pass
+
+        await log_download(user_id, url, "audio")
+    finally:
+        if cover_path and os.path.exists(cover_path):
+            try:
+                os.remove(cover_path)
+            except Exception:
+                pass
+        for fp in spotify_files:
+            try:
+                if fp and os.path.exists(fp):
+                    os.remove(fp)
+            except Exception:
+                pass
+        if dir_to_clean and os.path.exists(dir_to_clean):
+            shutil.rmtree(dir_to_clean, ignore_errors=True)
+
+async def _handle_spotify_message(message: Message, user_id: int, lang: str, url: str):
+    if not await check_rate_limit(user_id, config.daily_limit):
+        await message.answer(get_text(lang, 'rate_limit', limit=config.daily_limit))
+        return
+
+    position = await queue_manager.acquire()
+    status_msg = await message.answer(get_text(lang, 'queued', position=position))
+    await queue_manager.wait_and_acquire()
+    try:
+        try:
+            await status_msg.edit_text(get_text(lang, 'downloading'))
+        except Exception:
+            pass
+
+        result = await download_spotify(url)
+        if not result.get("success"):
+            await status_msg.edit_text(get_text(lang, 'error', error=result.get("error", "Spotify download failed")))
+            return
+
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+        await _send_spotify_result(message, lang, user_id, url, result)
+    finally:
+        queue_manager.release()
+
 def _sanitize_url(url: str) -> str:
     u = (url or "").strip()
     u = u.replace("`", "")
@@ -52,6 +145,9 @@ async def process_url(message: Message):
     for url in urls:
         clean_url = _sanitize_url(url)
         if not clean_url:
+            continue
+        if 'spotify.com' in clean_url:
+            await _handle_spotify_message(message, user_id, lang, clean_url)
             continue
         pending_id = await create_pending_download(user_id, clean_url)
         kb = None
