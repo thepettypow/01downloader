@@ -13,12 +13,25 @@ async def download_media(url: str, mode: str = 'video', max_height: int | None =
 
 def _find_downloaded_file(prefix: str) -> str | None:
     try:
+        candidates = []
         for name in os.listdir(config.download_dir):
-            if name.startswith(prefix + "."):
-                return os.path.join(config.download_dir, name)
+            if not name.startswith(prefix + "."):
+                continue
+            if name.endswith((".part", ".ytdl", ".tmp")):
+                continue
+            candidates.append(name)
+        candidates.sort()
+        if candidates:
+            return os.path.join(config.download_dir, candidates[-1])
     except Exception:
         return None
     return None
+
+def _shorten_stderr(text: str, max_lines: int = 25) -> str:
+    lines = (text or "").splitlines()
+    if len(lines) <= max_lines:
+        return "\n".join(lines).strip()
+    return "\n".join(lines[-max_lines:]).strip()
 
 def _merge_extractor_args(opts: dict, extra: dict) -> None:
     existing = opts.get("extractor_args") or {}
@@ -143,11 +156,15 @@ def _download_sync(url: str, mode: str, max_height: int | None) -> dict:
                     file_path = os.path.join(config.download_dir, f'{file_id}.mp3')
                 else:
                     input_path = _find_downloaded_file(file_id) or ydl.prepare_filename(info)
+                    temp_out = os.path.join(config.download_dir, f'{file_id}.tg.mp4')
                     file_path = os.path.join(config.download_dir, f'{file_id}.mp4')
+                    if os.path.exists(temp_out):
+                        os.remove(temp_out)
+                    _ffmpeg_transcode_telegram_mp4(input_path, temp_out, max_height)
                     if os.path.exists(file_path):
                         os.remove(file_path)
-                    _ffmpeg_transcode_telegram_mp4(input_path, file_path, max_height)
-                    if input_path != file_path and os.path.exists(input_path):
+                    os.rename(temp_out, file_path)
+                    if input_path not in (file_path, temp_out) and os.path.exists(input_path):
                         os.remove(input_path)
                 return info, file_path
 
@@ -195,7 +212,7 @@ def _download_sync(url: str, mode: str, max_height: int | None) -> dict:
     except Exception as e:
         msg = str(e)
         if isinstance(e, subprocess.CalledProcessError):
-            msg = (e.stderr or msg).strip() or msg
+            msg = _shorten_stderr(e.stderr or msg) or msg
         if _is_youtubetab_authcheck_error(msg):
             msg = (
                 "YouTube blocked playlist extraction (authentication/webpage check). "
