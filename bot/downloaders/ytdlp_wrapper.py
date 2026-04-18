@@ -9,6 +9,15 @@ async def download_media(url: str, mode: str = 'video') -> dict:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _download_sync, url, mode)
 
+def _find_downloaded_file(prefix: str) -> str | None:
+    try:
+        for name in os.listdir(config.download_dir):
+            if name.startswith(prefix + "."):
+                return os.path.join(config.download_dir, name)
+    except Exception:
+        return None
+    return None
+
 def _download_sync(url: str, mode: str) -> dict:
     os.makedirs(config.download_dir, exist_ok=True)
     file_id = str(uuid.uuid4())
@@ -48,7 +57,8 @@ def _download_sync(url: str, mode: str) -> dict:
         })
     else:
         ydl_opts.update({
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'format': 'bv*+ba/best',
+            'merge_output_format': 'mp4',
         })
         
     try:
@@ -57,7 +67,7 @@ def _download_sync(url: str, mode: str) -> dict:
             if mode == 'audio':
                 file_path = os.path.join(config.download_dir, f'{file_id}.mp3')
             else:
-                file_path = ydl.prepare_filename(info)
+                file_path = _find_downloaded_file(file_id) or ydl.prepare_filename(info)
             
             return {
                 'success': True,

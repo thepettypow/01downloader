@@ -72,7 +72,11 @@ async def process_url(message: Message):
                     await message.reply_audio(media, caption=title)
                 else:
                     media = FSInputFile(file_path)
-                    await message.reply_video(media, caption=title)
+                    ext = os.path.splitext(file_path)[1].lower()
+                    if ext in ('.mp4', '.m4v', '.mov'):
+                        await message.reply_video(media, caption=title)
+                    else:
+                        await message.reply_document(media, caption=title)
                     
                 await log_download(user_id, url, download_type)
                 await msg.delete()
