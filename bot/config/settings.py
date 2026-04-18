@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     ytdlp_cookie_file: Optional[str] = None
     ytdlp_proxy: Optional[str] = None
     ytdlp_user_agent: Optional[str] = None
+    ytdlp_remote_components: str = "ejs:github"
 
     class Config:
         env_file = ".env"

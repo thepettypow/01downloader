@@ -28,6 +28,11 @@ def _download_sync(url: str, mode: str) -> dict:
         'no_warnings': True,
         'max_filesize': 2000000000, # 2GB
     }
+    remote_components = (getattr(config, "ytdlp_remote_components", "") or "").strip()
+    if remote_components:
+        ydl_opts["remote_components"] = {c.strip() for c in remote_components.split(",") if c.strip()}
+
+    ydl_opts["js_runtimes"] = {"deno": {}}
     cookie_file = (config.ytdlp_cookie_file or "").strip()
     cookie_candidates = []
     if cookie_file:
