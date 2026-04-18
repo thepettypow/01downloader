@@ -89,7 +89,13 @@ async def process_download_choice(callback: CallbackQuery):
         await callback.message.edit_text(get_text(lang, 'downloading'))
 
         force_document = action == 'document'
+        max_height = None
         requested_mode = 'audio' if action == 'audio' else 'video'
+        if action.startswith('video_'):
+            requested_mode = 'video'
+            suffix = action.split('_', 1)[1]
+            if suffix.isdigit():
+                max_height = int(suffix)
 
         if 'spotify.com' in url:
             result = await download_spotify(url)
@@ -98,7 +104,7 @@ async def process_download_choice(callback: CallbackQuery):
             result = await download_direct_file(url)
             download_type = 'audio' if url.endswith('.mp3') else 'video'
         else:
-            result = await download_media(url, requested_mode)
+            result = await download_media(url, requested_mode, max_height=max_height)
             download_type = requested_mode
 
         if not result['success']:
@@ -125,7 +131,7 @@ async def process_download_choice(callback: CallbackQuery):
             else:
                 ext = os.path.splitext(file_path)[1].lower()
                 if ext in ('.mp4', '.m4v', '.mov'):
-                    await callback.message.answer_video(media, caption=title)
+                    await callback.message.answer_video(media, caption=title, supports_streaming=True)
                 else:
                     await callback.message.answer_document(media, caption=title)
 

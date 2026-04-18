@@ -1,14 +1,15 @@
 import asyncio
 import copy
 import os
+import subprocess
 import uuid
 from bot.config.settings import config
 import yt_dlp
 
-async def download_media(url: str, mode: str = 'video') -> dict:
+async def download_media(url: str, mode: str = 'video', max_height: int | None = None) -> dict:
     # Run yt-dlp in executor to not block async loop
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _download_sync, url, mode)
+    return await loop.run_in_executor(None, _download_sync, url, mode, max_height)
 
 def _find_downloaded_file(prefix: str) -> str | None:
     try:
@@ -38,7 +39,41 @@ def _is_youtubetab_authcheck_error(msg: str) -> bool:
     m = (msg or "").lower()
     return "playlists that require authentication" in m or "youtubetab:skip=authcheck" in m
 
-def _download_sync(url: str, mode: str) -> dict:
+def _ffmpeg_transcode_telegram_mp4(input_path: str, output_path: str, max_height: int | None) -> None:
+    vf = "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p"
+    if max_height:
+        h = int(max_height)
+        vf = f"scale=-2:trunc(min({h},ih)/2)*2,format=yuv420p"
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        input_path,
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0?",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+        "-pix_fmt",
+        "yuv420p",
+        "-vf",
+        vf,
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
+        output_path,
+    ]
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, check=True)
+
+def _download_sync(url: str, mode: str, max_height: int | None) -> dict:
     os.makedirs(config.download_dir, exist_ok=True)
     file_id = str(uuid.uuid4())
     
@@ -91,13 +126,13 @@ def _download_sync(url: str, mode: str) -> dict:
             }],
         })
     else:
+        if max_height:
+            h = int(max_height)
+            video_format = f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best"
+        else:
+            video_format = 'bv*+ba/best'
         ydl_opts.update({
-            'format': 'bv*+ba/best',
-            'merge_output_format': 'mp4',
-            'postprocessors': [{
-                'key': 'FFmpegVideoRemuxer',
-                'preferedformat': 'mp4',
-            }],
+            'format': video_format,
         })
         
     try:
@@ -107,7 +142,13 @@ def _download_sync(url: str, mode: str) -> dict:
                 if mode == 'audio':
                     file_path = os.path.join(config.download_dir, f'{file_id}.mp3')
                 else:
-                    file_path = _find_downloaded_file(file_id) or ydl.prepare_filename(info)
+                    input_path = _find_downloaded_file(file_id) or ydl.prepare_filename(info)
+                    file_path = os.path.join(config.download_dir, f'{file_id}.mp4')
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                    _ffmpeg_transcode_telegram_mp4(input_path, file_path, max_height)
+                    if input_path != file_path and os.path.exists(input_path):
+                        os.remove(input_path)
                 return info, file_path
 
         def download_with_format_fallback(opts: dict) -> tuple[dict, str]:
@@ -153,6 +194,8 @@ def _download_sync(url: str, mode: str) -> dict:
         }
     except Exception as e:
         msg = str(e)
+        if isinstance(e, subprocess.CalledProcessError):
+            msg = (e.stderr or msg).strip() or msg
         if _is_youtubetab_authcheck_error(msg):
             msg = (
                 "YouTube blocked playlist extraction (authentication/webpage check). "

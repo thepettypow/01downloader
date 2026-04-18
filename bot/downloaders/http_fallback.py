@@ -1,8 +1,40 @@
+import asyncio
 import aiohttp
 import aiofiles
 import os
+import subprocess
 import uuid
 from bot.config.settings import config
+
+def _ffmpeg_fix_mp4(input_path: str, output_path: str) -> None:
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        input_path,
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0?",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+        "-pix_fmt",
+        "yuv420p",
+        "-vf",
+        "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
+        output_path,
+    ]
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, check=True)
 
 async def download_direct_file(url: str) -> dict:
     os.makedirs(config.download_dir, exist_ok=True)
@@ -24,6 +56,22 @@ async def download_direct_file(url: str) -> dict:
                 async with aiofiles.open(file_path, 'wb') as f:
                     async for chunk in response.content.iter_chunked(1024 * 1024):
                         await f.write(chunk)
+
+                if ext == "mp4":
+                    fixed_path = os.path.join(config.download_dir, f'{file_id}.fixed.mp4')
+                    loop = asyncio.get_event_loop()
+                    try:
+                        await loop.run_in_executor(None, _ffmpeg_fix_mp4, file_path, fixed_path)
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                        file_path = os.path.join(config.download_dir, f'{file_id}.mp4')
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                        os.rename(fixed_path, file_path)
+                    except subprocess.CalledProcessError as e:
+                        if os.path.exists(fixed_path):
+                            os.remove(fixed_path)
+                        return {'success': False, 'error': (e.stderr or str(e)).strip() or str(e)}
                         
                 return {
                     'success': True, 
