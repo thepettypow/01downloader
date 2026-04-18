@@ -31,6 +31,10 @@ logger = logging.getLogger(__name__)
 
 URL_REGEX = re.compile(r'https?://[^\s]+')
 
+def _is_spotify_url(u: str) -> bool:
+    s = (u or "").lower()
+    return "spotify.com" in s or "open.spotify.com" in s or "spotify.link" in s
+
 async def _send_spotify_result(message: Message, lang: str, user_id: int, url: str, result: dict):
     spotify_files = result.get('file_paths') or []
     title = result.get('title', 'Media')
@@ -111,7 +115,25 @@ async def _handle_spotify_message(message: Message, user_id: int, lang: str, url
         except Exception:
             pass
 
-        result = await download_spotify(url)
+        started = asyncio.get_event_loop().time()
+        task = asyncio.create_task(download_spotify(url))
+
+        async def ticker():
+            while not task.done():
+                await asyncio.sleep(15)
+                if task.done():
+                    break
+                elapsed = int(asyncio.get_event_loop().time() - started)
+                try:
+                    await status_msg.edit_text(get_text(lang, 'downloading') + f"\n\n{elapsed}s")
+                except Exception:
+                    pass
+
+        ticker_task = asyncio.create_task(ticker())
+        try:
+            result = await task
+        finally:
+            ticker_task.cancel()
         if not result.get("success"):
             await status_msg.edit_text(get_text(lang, 'error', error=result.get("error", "Spotify download failed")))
             return
@@ -146,7 +168,7 @@ async def process_url(message: Message):
         clean_url = _sanitize_url(url)
         if not clean_url:
             continue
-        if 'spotify.com' in clean_url:
+        if _is_spotify_url(clean_url):
             await _handle_spotify_message(message, user_id, lang, clean_url)
             continue
         pending_id = await create_pending_download(user_id, clean_url)

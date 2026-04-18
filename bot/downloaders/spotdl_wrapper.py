@@ -7,6 +7,19 @@ from bot.config.settings import config
 
 logger = logging.getLogger(__name__)
 
+def _find_cookie_file() -> str | None:
+    cookie_file = (getattr(config, "ytdlp_cookie_file", None) or "").strip()
+    candidates = []
+    if cookie_file:
+        candidates.append(cookie_file)
+        candidates.append(os.path.join("/app/data", os.path.basename(cookie_file)))
+    candidates.append("/app/data/cookies.txt")
+    candidates.append("data/cookies.txt")
+    for c in candidates:
+        if c and os.path.exists(c):
+            return c
+    return None
+
 async def download_spotify(url: str) -> dict:
     os.makedirs(config.download_dir, exist_ok=True)
     file_id = str(uuid.uuid4())
@@ -17,15 +30,32 @@ async def download_spotify(url: str) -> dict:
         spotdl_bin = "/opt/spotdl/bin/spotdl"
         if not os.path.exists(spotdl_bin):
             spotdl_bin = "spotdl"
-        process = await asyncio.create_subprocess_exec(
-            spotdl_bin, "download", url,
+        args = [
+            spotdl_bin,
+            "download",
+            url,
             "--output", f"{unique_dir}/{{title}} - {{artist}}.{{ext}}",
             "--format", "mp3",
+        ]
+        cookie_path = _find_cookie_file()
+        if cookie_path:
+            args += ["--cookie-file", cookie_path]
+        process = await asyncio.create_subprocess_exec(
+            *args,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stderr=asyncio.subprocess.PIPE,
         )
         
-        stdout, stderr = await process.communicate()
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=int(getattr(config, "spotdl_timeout", 900)))
+        except asyncio.TimeoutError:
+            try:
+                process.kill()
+            except Exception:
+                pass
+            await process.wait()
+            shutil.rmtree(unique_dir, ignore_errors=True)
+            return {'success': False, 'error': 'Spotify download timed out. If this is YouTube blocking, add valid cookies.txt for music.youtube.com.'}
         
         if process.returncode == 0:
             files = sorted([f for f in os.listdir(unique_dir) if f.lower().endswith(".mp3")])
@@ -47,6 +77,8 @@ async def download_spotify(url: str) -> dict:
         msg = (err or out or 'Spotify download failed').strip()
         if "client id" in msg.lower() or "client secret" in msg.lower() or "spotipy" in msg.lower():
             msg = msg + "\n\nSet SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET in your environment."
+        if "sign in to confirm you're not a bot" in msg.lower() or "sign in to confirm you’re not a bot" in msg.lower():
+            msg = msg + "\n\nYouTube is blocking downloads. Add cookies.txt for music.youtube.com (spotdl --cookie-file)."
         return {'success': False, 'error': msg}
     
     except Exception as e:

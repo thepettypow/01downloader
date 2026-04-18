@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     ytdlp_skip_youtubetab_authcheck: bool = True
     ytdlp_playlist_end: int = 1
     ytdlp_overall_timeout: int = 1800
+    spotdl_timeout: int = 900
     telegram_request_timeout: int = 7200
     telegram_send_timeout: int = 120
     telegram_compress_timeout: int = 120
