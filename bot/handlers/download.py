@@ -20,6 +20,7 @@ from bot.config.settings import config
 from bot.downloaders.ytdlp_wrapper import download_media
 from bot.downloaders.spotdl_wrapper import download_spotify
 from bot.downloaders.http_fallback import download_direct_file
+from bot.utils.telegram_compress import compress_video_to_size, compress_audio_to_size
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -190,6 +191,7 @@ async def process_download_choice(callback: CallbackQuery):
         file_path = result['file_path']
         title = result.get('title', 'Media')
         dir_to_clean = result.get('dir_to_clean')
+        duration = result.get('duration')
         try:
             size = os.path.getsize(file_path)
             logger.info("sending file=%s bytes=%s", file_path, size)
@@ -197,6 +199,28 @@ async def process_download_choice(callback: CallbackQuery):
             pass
 
         try:
+            hard_limit = int(getattr(config, "telegram_hard_limit_bytes", 2000 * 1024 * 1024))
+            max_upload = int(getattr(config, "telegram_max_upload_bytes", 50 * 1024 * 1024))
+            enable_compress = bool(getattr(config, "telegram_enable_compression", True))
+            try:
+                current_size = os.path.getsize(file_path)
+            except Exception:
+                current_size = 0
+            if current_size and current_size > hard_limit:
+                await callback.message.edit_text(get_text(lang, 'error', error="File is larger than 2GB and cannot be uploaded by the bot."))
+                return
+            if enable_compress and current_size and current_size > max_upload:
+                await callback.message.edit_text(get_text(lang, 'downloading') + "\n\ncompressing…")
+                loop = asyncio.get_event_loop()
+                compressed_path = os.path.join(config.download_dir, f"tg_{os.path.basename(file_path)}")
+                if download_type == "audio":
+                    await loop.run_in_executor(None, compress_audio_to_size, file_path, compressed_path, max_upload, duration)
+                else:
+                    await loop.run_in_executor(None, compress_video_to_size, file_path, compressed_path, max_upload, duration, max_height)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                file_path = compressed_path
+
             async def send_once():
                 media = FSInputFile(file_path)
                 if download_type == 'audio':
@@ -214,7 +238,26 @@ async def process_download_choice(callback: CallbackQuery):
                     break
                 except Exception as e:
                     last_err = e
-                    if "Cannot write to closing transport" in str(e) and attempt == 0:
+                    if "Cannot write to closing transport" in str(e) and attempt == 0 and enable_compress:
+                        try:
+                            current_size = os.path.getsize(file_path)
+                        except Exception:
+                            current_size = 0
+                        if current_size and current_size > max_upload:
+                            raise
+                        loop = asyncio.get_event_loop()
+                        compressed_path = os.path.join(config.download_dir, f"tg_retry_{os.path.basename(file_path)}")
+                        try:
+                            await callback.message.edit_text(get_text(lang, 'downloading') + "\n\ncompressing…")
+                        except Exception:
+                            pass
+                        if download_type == "audio":
+                            await loop.run_in_executor(None, compress_audio_to_size, file_path, compressed_path, max_upload, duration)
+                        else:
+                            await loop.run_in_executor(None, compress_video_to_size, file_path, compressed_path, max_upload, duration, max_height)
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                        file_path = compressed_path
                         await asyncio.sleep(2)
                         continue
                     raise
