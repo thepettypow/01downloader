@@ -133,6 +133,7 @@ def _ffmpeg_transcode_telegram_mp4(input_path: str, output_path: str, max_height
 def _download_sync(url: str, mode: str, max_height: int | None, audio_bitrate_kbps: int | None, status: dict | None) -> dict:
     os.makedirs(config.download_dir, exist_ok=True)
     file_id = str(uuid.uuid4())
+    logger.info("download start mode=%s max_height=%s audio_kbps=%s url=%s", mode, max_height, audio_bitrate_kbps, url)
     if status is not None:
         status["phase"] = "init"
         status["detail"] = ""
