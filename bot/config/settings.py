@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     max_concurrent_downloads: int = 4
     daily_limit: int = 50
     ytdlp_cookie_file: Optional[str] = None
+    ytdlp_cookies_from_browser: Optional[str] = None
     ytdlp_proxy: Optional[str] = None
     ytdlp_user_agent: Optional[str] = None
     ytdlp_remote_components: str = "ejs:github"

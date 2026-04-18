@@ -316,6 +316,12 @@ def _download_sync(url: str, mode: str, max_height: int | None, audio_bitrate_kb
         if candidate and os.path.exists(candidate):
             ydl_opts['cookiefile'] = candidate
             break
+    cookies_from_browser = (getattr(config, "ytdlp_cookies_from_browser", "") or "").strip()
+    if cookies_from_browser:
+        parts = [p.strip() for p in cookies_from_browser.split(":", 1)]
+        browser = parts[0]
+        profile = parts[1] if len(parts) > 1 and parts[1] else None
+        ydl_opts["cookiesfrombrowser"] = (browser, profile) if profile else (browser,)
     proxy = (config.ytdlp_proxy or "").strip()
     if proxy:
         ydl_opts['proxy'] = proxy
@@ -449,6 +455,11 @@ def _download_sync(url: str, mode: str, max_height: int | None, audio_bitrate_kb
         }
     except Exception as e:
         msg = str(e)
+        if "sign in to confirm you’re not a bot" in msg.lower() or "sign in to confirm you're not a bot" in msg.lower():
+            msg = (
+                "YouTube requires verification (anti-bot). "
+                "Add a valid cookies.txt (YTDLP_COOKIE_FILE) or set YTDLP_COOKIES_FROM_BROWSER."
+            )
         if isinstance(e, subprocess.CalledProcessError):
             msg = _shorten_stderr(e.stderr or msg) or msg
         if isinstance(e, subprocess.TimeoutExpired):
