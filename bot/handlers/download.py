@@ -28,8 +28,9 @@ URL_REGEX = re.compile(r'https?://[^\s]+')
 
 def _sanitize_url(url: str) -> str:
     u = (url or "").strip()
-    u = u.strip("`'\"<>[]()")
-    u = u.lstrip("`'\"<>[]()")
+    u = u.replace("`", "")
+    u = u.strip("'\"<>[]()")
+    u = u.lstrip("'\"<>[]()")
     while u and u[-1] in ("`", "'", "\"", ">", "]", ")", ".", ",", ";", ":"):
         u = u[:-1]
     return u
@@ -196,15 +197,29 @@ async def process_download_choice(callback: CallbackQuery):
             pass
 
         try:
-            media = FSInputFile(file_path)
-            if download_type == 'audio':
-                await callback.message.answer_audio(media, caption=title)
-            else:
+            async def send_once():
+                media = FSInputFile(file_path)
+                if download_type == 'audio':
+                    return await callback.message.answer_audio(media, caption=title)
                 ext = os.path.splitext(file_path)[1].lower()
                 if ext in ('.mp4', '.m4v', '.mov'):
-                    await callback.message.answer_video(media, caption=title, supports_streaming=True)
-                else:
-                    await callback.message.answer_document(media, caption=title)
+                    return await callback.message.answer_video(media, caption=title, supports_streaming=True)
+                return await callback.message.answer_document(media, caption=title)
+
+            last_err = None
+            for attempt in range(2):
+                try:
+                    await send_once()
+                    last_err = None
+                    break
+                except Exception as e:
+                    last_err = e
+                    if "Cannot write to closing transport" in str(e) and attempt == 0:
+                        await asyncio.sleep(2)
+                        continue
+                    raise
+            if last_err is not None:
+                raise last_err
 
             await log_download(user_id, url, download_type)
             try:
@@ -212,6 +227,7 @@ async def process_download_choice(callback: CallbackQuery):
             except Exception:
                 pass
         except Exception as e:
+            logger.exception("send failed")
             await callback.message.edit_text(get_text(lang, 'error', error=str(e)))
         finally:
             if os.path.exists(file_path):
