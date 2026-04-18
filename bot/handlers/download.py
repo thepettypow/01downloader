@@ -4,6 +4,7 @@ import os
 import random
 import re
 import shutil
+import uuid
 from aiogram import Router, F
 from aiogram.types import Message, FSInputFile, CallbackQuery
 from bot.models.database import (
@@ -22,6 +23,7 @@ from bot.downloaders.ytdlp_wrapper import download_media, probe_media
 from bot.downloaders.spotdl_wrapper import download_spotify
 from bot.downloaders.http_fallback import download_direct_file
 from bot.utils.telegram_compress import compress_video_to_size, compress_audio_to_size
+from bot.utils.video_tools import probe_video, extract_thumbnail
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -248,7 +250,36 @@ async def process_download_choice(callback: CallbackQuery):
                         return await callback.message.answer_audio(media, caption=title)
                     ext = os.path.splitext(file_path)[1].lower()
                     if ext in ('.mp4', '.m4v', '.mov'):
-                        return await callback.message.answer_video(media, caption=title, supports_streaming=True)
+                        loop = asyncio.get_event_loop()
+                        meta = await loop.run_in_executor(None, probe_video, file_path)
+                        d = meta.get("duration")
+                        if not d:
+                            d = duration
+                        duration_s = int(d) if d else None
+                        thumb_path = None
+                        try:
+                            thumb_path = os.path.join(config.download_dir, f"thumb_{uuid.uuid4().hex}.jpg")
+                            await loop.run_in_executor(None, extract_thumbnail, file_path, thumb_path)
+                        except Exception:
+                            thumb_path = None
+
+                        try:
+                            kwargs = {"supports_streaming": True}
+                            if duration_s:
+                                kwargs["duration"] = duration_s
+                            if meta.get("width"):
+                                kwargs["width"] = int(meta["width"])
+                            if meta.get("height"):
+                                kwargs["height"] = int(meta["height"])
+                            if thumb_path and os.path.exists(thumb_path):
+                                kwargs["thumbnail"] = FSInputFile(thumb_path)
+                            return await callback.message.answer_video(media, caption=title, **kwargs)
+                        finally:
+                            if thumb_path and os.path.exists(thumb_path):
+                                try:
+                                    os.remove(thumb_path)
+                                except Exception:
+                                    pass
                     return await callback.message.answer_document(media, caption=title)
 
                 return await asyncio.wait_for(
