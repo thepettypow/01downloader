@@ -118,8 +118,15 @@ async def process_download_choice(callback: CallbackQuery):
             download_type = 'audio' if url.endswith('.mp3') else 'video'
         else:
             try:
+                status = {}
                 download_task = asyncio.create_task(
-                    download_media(url, requested_mode, max_height=max_height, audio_bitrate_kbps=audio_bitrate_kbps)
+                    download_media(
+                        url,
+                        requested_mode,
+                        max_height=max_height,
+                        audio_bitrate_kbps=audio_bitrate_kbps,
+                        status=status,
+                    )
                 )
                 started = asyncio.get_event_loop().time()
 
@@ -129,8 +136,15 @@ async def process_download_choice(callback: CallbackQuery):
                         if download_task.done():
                             break
                         elapsed = int(asyncio.get_event_loop().time() - started)
+                        phase = (status or {}).get("phase") or ""
+                        progress = (status or {}).get("progress") or ""
+                        detail = (status or {}).get("detail") or ""
+                        extra = " ".join([x for x in (detail, phase, progress) if x]).strip()
                         try:
-                            await callback.message.edit_text(f"{get_text(lang, 'downloading')}\n\n{elapsed}s")
+                            text = f"{get_text(lang, 'downloading')}\n\n{elapsed}s"
+                            if extra:
+                                text = f"{get_text(lang, 'downloading')}\n\n{extra}\n{elapsed}s"
+                            await callback.message.edit_text(text)
                         except Exception:
                             pass
 

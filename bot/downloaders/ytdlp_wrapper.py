@@ -1,15 +1,24 @@
 import asyncio
 import copy
+import logging
 import os
 import subprocess
 import uuid
 from bot.config.settings import config
 import yt_dlp
 
-async def download_media(url: str, mode: str = 'video', max_height: int | None = None, audio_bitrate_kbps: int | None = None) -> dict:
+logger = logging.getLogger(__name__)
+
+async def download_media(
+    url: str,
+    mode: str = 'video',
+    max_height: int | None = None,
+    audio_bitrate_kbps: int | None = None,
+    status: dict | None = None,
+) -> dict:
     # Run yt-dlp in executor to not block async loop
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _download_sync, url, mode, max_height, audio_bitrate_kbps)
+    return await loop.run_in_executor(None, _download_sync, url, mode, max_height, audio_bitrate_kbps, status)
 
 def _find_downloaded_file(prefix: str) -> str | None:
     try:
@@ -52,8 +61,8 @@ def _is_youtubetab_authcheck_error(msg: str) -> bool:
     m = (msg or "").lower()
     return "playlists that require authentication" in m or "youtubetab:skip=authcheck" in m
 
-def _run_ffmpeg(cmd: list[str]) -> None:
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, check=True)
+def _run_ffmpeg(cmd: list[str], timeout_s: int | None) -> None:
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, check=True, timeout=timeout_s)
 
 def _ffmpeg_transcode_telegram_mp4(input_path: str, output_path: str, max_height: int | None) -> None:
     base = [
@@ -66,6 +75,7 @@ def _ffmpeg_transcode_telegram_mp4(input_path: str, output_path: str, max_height
         "-i",
         input_path,
     ]
+    timeout_s = int(getattr(config, "ytdlp_overall_timeout", 1800) or 1800)
     if not max_height:
         try:
             cmd = [
@@ -84,9 +94,9 @@ def _ffmpeg_transcode_telegram_mp4(input_path: str, output_path: str, max_height
                 "+faststart",
                 output_path,
             ]
-            _run_ffmpeg(cmd)
+            _run_ffmpeg(cmd, timeout_s=timeout_s)
             return
-        except subprocess.CalledProcessError:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             if os.path.exists(output_path):
                 os.remove(output_path)
 
@@ -118,11 +128,15 @@ def _ffmpeg_transcode_telegram_mp4(input_path: str, output_path: str, max_height
         "+faststart",
         output_path,
     ]
-    _run_ffmpeg(cmd)
+    _run_ffmpeg(cmd, timeout_s=timeout_s)
 
-def _download_sync(url: str, mode: str, max_height: int | None, audio_bitrate_kbps: int | None) -> dict:
+def _download_sync(url: str, mode: str, max_height: int | None, audio_bitrate_kbps: int | None, status: dict | None) -> dict:
     os.makedirs(config.download_dir, exist_ok=True)
     file_id = str(uuid.uuid4())
+    if status is not None:
+        status["phase"] = "init"
+        status["detail"] = ""
+        status["progress"] = ""
     
     ydl_opts = {
         'outtmpl': os.path.join(config.download_dir, f'{file_id}.%(ext)s'),
@@ -184,7 +198,30 @@ def _download_sync(url: str, mode: str, max_height: int | None, audio_bitrate_kb
         })
         
     try:
+        def progress_hook(d: dict) -> None:
+            if status is None:
+                return
+            st = d.get("status")
+            if st == "downloading":
+                total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+                downloaded = d.get("downloaded_bytes") or 0
+                if total:
+                    pct = int(downloaded * 100 / total)
+                    status["progress"] = f"{pct}%"
+                else:
+                    status["progress"] = ""
+                status["phase"] = "downloading"
+            elif st == "finished":
+                status["phase"] = "processing"
+                status["progress"] = ""
+
+        ydl_opts["progress_hooks"] = [progress_hook]
+
         def run_download(opts: dict) -> tuple[dict, str]:
+            if status is not None:
+                status["phase"] = "extracting"
+                status["detail"] = "yt-dlp"
+                status["progress"] = ""
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 if mode == 'audio':
@@ -195,6 +232,10 @@ def _download_sync(url: str, mode: str, max_height: int | None, audio_bitrate_kb
                     file_path = os.path.join(config.download_dir, f'{file_id}.mp4')
                     if os.path.exists(temp_out):
                         os.remove(temp_out)
+                    if status is not None:
+                        status["phase"] = "processing"
+                        status["detail"] = "ffmpeg"
+                        status["progress"] = ""
                     _ffmpeg_transcode_telegram_mp4(input_path, temp_out, max_height)
                     if os.path.exists(file_path):
                         os.remove(file_path)
@@ -248,11 +289,14 @@ def _download_sync(url: str, mode: str, max_height: int | None, audio_bitrate_kb
         msg = str(e)
         if isinstance(e, subprocess.CalledProcessError):
             msg = _shorten_stderr(e.stderr or msg) or msg
+        if isinstance(e, subprocess.TimeoutExpired):
+            msg = "Processing timed out. Try a lower quality."
         if _is_youtubetab_authcheck_error(msg):
             msg = (
                 "YouTube blocked playlist extraction (authentication/webpage check). "
                 "If this playlist is private/age-restricted, the bot needs valid YouTube cookies."
             )
+        logger.exception("download failed")
         return {
             'success': False,
             'error': msg
