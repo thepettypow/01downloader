@@ -1,8 +1,8 @@
 import os
 import subprocess
 
-def _run(cmd: list[str]) -> None:
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, check=True)
+def _run(cmd: list[str], timeout_s: int | None = None) -> None:
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, check=True, timeout=timeout_s)
 
 def _target_video_bitrate_kbps(max_bytes: int, duration_s: int | None, audio_kbps: int) -> int | None:
     if not duration_s or duration_s <= 0:
@@ -17,6 +17,7 @@ def compress_video_to_size(
     max_bytes: int,
     duration_s: int | None = None,
     prefer_height: int | None = None,
+    timeout_s: int | None = None,
 ) -> str:
     heights = [h for h in [prefer_height, 720, 480, 360, 240] if h]
     audio_kbps_steps = [128, 96, 64]
@@ -60,8 +61,8 @@ def compress_video_to_size(
             try:
                 if os.path.exists(output_path):
                     os.remove(output_path)
-                _run(cmd)
-            except subprocess.CalledProcessError:
+                _run(cmd, timeout_s=timeout_s)
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
                 if os.path.exists(output_path):
                     os.remove(output_path)
                 continue
@@ -77,6 +78,7 @@ def compress_audio_to_size(
     output_path: str,
     max_bytes: int,
     duration_s: int | None = None,
+    timeout_s: int | None = None,
 ) -> str:
     bitrate_steps = [192, 160, 128, 96, 64]
     for kbps in bitrate_steps:
@@ -99,8 +101,8 @@ def compress_audio_to_size(
         try:
             if os.path.exists(output_path):
                 os.remove(output_path)
-            _run(cmd)
-        except subprocess.CalledProcessError:
+            _run(cmd, timeout_s=timeout_s)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             if os.path.exists(output_path):
                 os.remove(output_path)
             continue
@@ -110,4 +112,3 @@ def compress_audio_to_size(
         except Exception:
             pass
     raise RuntimeError("Unable to compress audio under the configured upload limit")
-

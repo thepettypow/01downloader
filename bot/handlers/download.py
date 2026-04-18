@@ -241,21 +241,6 @@ async def process_download_choice(callback: CallbackQuery):
             if current_size and current_size > hard_limit:
                 await callback.message.edit_text(get_text(lang, 'error', error="File is larger than 2GB and cannot be uploaded by the bot."))
                 return
-            if enable_compress and current_size and current_size > max_upload:
-                await callback.message.edit_text(get_text(lang, 'downloading') + "\n\ncompressing…")
-                loop = asyncio.get_event_loop()
-                compressed_path = os.path.join(config.download_dir, f"tg_{os.path.basename(file_path)}")
-                if download_type == "audio":
-                    await loop.run_in_executor(None, compress_audio_to_size, file_path, compressed_path, max_upload, duration)
-                else:
-                    await loop.run_in_executor(None, compress_video_to_size, file_path, compressed_path, max_upload, duration, max_height)
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                file_path = compressed_path
-                try:
-                    current_size = os.path.getsize(file_path)
-                except Exception:
-                    current_size = 0
 
             async def send_once():
                 async def do_send():
@@ -275,20 +260,7 @@ async def process_download_choice(callback: CallbackQuery):
             async def send_as_parts():
                 loop = asyncio.get_event_loop()
                 part_size = max(1, min(fallback_upload, hard_limit))
-                if enable_compress and os.path.getsize(file_path) > part_size:
-                    await callback.message.edit_text(get_text(lang, 'downloading') + "\n\ncompressing…")
-                    compressed_path = os.path.join(config.download_dir, f"tg_part_{os.path.basename(file_path)}")
-                    if download_type == "audio":
-                        await loop.run_in_executor(None, compress_audio_to_size, file_path, compressed_path, part_size, duration)
-                    else:
-                        await loop.run_in_executor(None, compress_video_to_size, file_path, compressed_path, part_size, duration, max_height)
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                    file_path_local = compressed_path
-                else:
-                    file_path_local = file_path
-
-                part_paths = await loop.run_in_executor(None, split_file, file_path_local, part_size, config.download_dir)
+                part_paths = await loop.run_in_executor(None, split_file, file_path, part_size, config.download_dir)
                 total = len(part_paths)
                 try:
                     for i, part_path in enumerate(part_paths, start=1):
@@ -303,11 +275,6 @@ async def process_download_choice(callback: CallbackQuery):
                         try:
                             if os.path.exists(p):
                                 os.remove(p)
-                        except Exception:
-                            pass
-                    if file_path_local != file_path and os.path.exists(file_path_local):
-                        try:
-                            os.remove(file_path_local)
                         except Exception:
                             pass
 
@@ -344,9 +311,26 @@ async def process_download_choice(callback: CallbackQuery):
                             except Exception:
                                 pass
                             if download_type == "audio":
-                                await loop.run_in_executor(None, compress_audio_to_size, file_path, compressed_path, fallback_upload, duration)
+                                await loop.run_in_executor(
+                                    None,
+                                    compress_audio_to_size,
+                                    file_path,
+                                    compressed_path,
+                                    fallback_upload,
+                                    duration,
+                                    int(getattr(config, "telegram_compress_timeout", 180)),
+                                )
                             else:
-                                await loop.run_in_executor(None, compress_video_to_size, file_path, compressed_path, fallback_upload, duration, max_height)
+                                await loop.run_in_executor(
+                                    None,
+                                    compress_video_to_size,
+                                    file_path,
+                                    compressed_path,
+                                    fallback_upload,
+                                    duration,
+                                    max_height,
+                                    int(getattr(config, "telegram_compress_timeout", 180)),
+                                )
                             if os.path.exists(file_path):
                                 os.remove(file_path)
                             file_path = compressed_path
