@@ -13,6 +13,7 @@ _NEXT_DATA_RE = re.compile(r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>'
 _META_OG_RE = re.compile(r'<meta[^>]+property="og:(title|image)"[^>]+content="([^"]+)"', re.IGNORECASE)
 _TRACK_ANCHOR_RE = re.compile(r'href="/track/([A-Za-z0-9]+)[^"]*"[^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL)
 _ARTIST_ANCHOR_RE = re.compile(r'href="/artist/([A-Za-z0-9]+)[^"]*"[^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL)
+_EMBED_ROW_RE = re.compile(r'<h3[^>]*>(.*?)</h3>.*?<h4[^>]*>(.*?)</h4>', re.IGNORECASE | re.DOTALL)
 _TAG_RE = re.compile(r"<[^>]+>")
 
 def _dedupe_tracks(tracks: list[dict]) -> list[dict]:
@@ -59,6 +60,22 @@ def _parse_html_tracklist(html: str) -> dict:
             artist = re.sub(r"^\s*E\s*", "", artist).strip()
         tracks.append({"title": track_title, "artist": artist, "album": title or None})
 
+    tracks = _dedupe_tracks(tracks)
+    return {"success": True, "title": title or None, "cover_url": cover_url, "tracks": tracks}
+
+def _parse_embed_html_tracklist(html: str) -> dict:
+    og = {k.lower(): v for (k, v) in _META_OG_RE.findall(html or "")}
+    title = _clean_og_title(og.get("title") or "")
+    cover_url = og.get("image")
+    tracks: list[dict] = []
+    for m in _EMBED_ROW_RE.finditer(html or ""):
+        t = _strip_tags(m.group(1))
+        a = _strip_tags(m.group(2))
+        if a:
+            a = re.sub(r"^\s*E\s*", "", a).strip()
+        if not t:
+            continue
+        tracks.append({"title": t, "artist": a or None, "album": title or None})
     tracks = _dedupe_tracks(tracks)
     return {"success": True, "title": title or None, "cover_url": cover_url, "tracks": tracks}
 
@@ -174,6 +191,9 @@ async def scrape_tracklist(url: str) -> dict:
         parsed = _parse_html_tracklist(html)
         if parsed.get("tracks"):
             return parsed
+        embed = await _try_embed(url)
+        if embed.get("success") and embed.get("tracks"):
+            return embed
         return {"success": False, "error": "Unable to parse Spotify page"}
     try:
         data = json.loads(m.group(1))
@@ -181,6 +201,9 @@ async def scrape_tracklist(url: str) -> dict:
         parsed = _parse_html_tracklist(html)
         if parsed.get("tracks"):
             return parsed
+        embed = await _try_embed(url)
+        if embed.get("success") and embed.get("tracks"):
+            return embed
         return {"success": False, "error": "Unable to decode Spotify page data"}
 
     album_name = _find_album_name(data)
@@ -192,7 +215,26 @@ async def scrape_tracklist(url: str) -> dict:
         parsed = _parse_html_tracklist(html)
         if parsed.get("tracks"):
             return parsed
+        embed = await _try_embed(url)
+        if embed.get("success") and embed.get("tracks"):
+            return embed
     return {"success": True, "title": album_name, "cover_url": cover_url, "tracks": tracks}
+
+async def _try_embed(url: str) -> dict:
+    m = re.search(r"https?://open\.spotify\.com/(album|playlist|track)/([A-Za-z0-9]+)", url or "")
+    if not m:
+        return {"success": False}
+    kind = m.group(1)
+    sid = m.group(2)
+    embed_url = f"https://open.spotify.com/embed/{kind}/{sid}"
+    html = await _http_get_text(embed_url)
+    if not html:
+        return {"success": False}
+    parsed = _parse_embed_html_tracklist(html)
+    if parsed.get("tracks"):
+        return parsed
+    parsed2 = _parse_html_tracklist(html)
+    return parsed2 if parsed2.get("tracks") else {"success": False}
 
 async def _download_cover(cover_url: str) -> str | None:
     if not cover_url:
