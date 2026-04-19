@@ -9,6 +9,25 @@ import yt_dlp
 
 logger = logging.getLogger(__name__)
 
+def _cookiefile_has_youtube_cookies(path: str) -> bool:
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                s = (line or "").lower()
+                if not s or s.startswith("#"):
+                    continue
+                if "\tyoutube.com\t" in s or "\t.google.com\t" in s or "\taccounts.google.com\t" in s:
+                    return True
+                if s.startswith("youtube.com\t") or s.startswith(".youtube.com\t"):
+                    return True
+                if s.startswith("google.com\t") or s.startswith(".google.com\t"):
+                    return True
+                if s.startswith("accounts.google.com\t") or s.startswith(".accounts.google.com\t"):
+                    return True
+    except Exception:
+        return False
+    return False
+
 async def download_media(
     url: str,
     mode: str = 'video',
@@ -457,9 +476,17 @@ def _download_sync(url: str, mode: str, max_height: int | None, audio_bitrate_kb
     except Exception as e:
         msg = str(e)
         if "sign in to confirm you’re not a bot" in msg.lower() or "sign in to confirm you're not a bot" in msg.lower():
+            cookiefile = (ydl_opts or {}).get("cookiefile")
+            cookie_hint = ""
+            try:
+                if cookiefile and os.path.exists(str(cookiefile)) and not _cookiefile_has_youtube_cookies(str(cookiefile)):
+                    cookie_hint = " Current cookies.txt does not include youtube.com/google.com cookies."
+            except Exception:
+                cookie_hint = ""
             msg = (
                 "YouTube requires verification (anti-bot). "
                 "Add a valid cookies.txt (YTDLP_COOKIE_FILE) or set YTDLP_COOKIES_FROM_BROWSER."
+                + cookie_hint
             )
         if isinstance(e, subprocess.CalledProcessError):
             msg = _shorten_stderr(e.stderr or msg) or msg

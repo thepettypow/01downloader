@@ -4,7 +4,7 @@ import uuid
 import yt_dlp
 
 from bot.config.settings import config
-from bot.downloaders.ytdlp_wrapper import _merge_extractor_args
+from bot.downloaders.ytdlp_wrapper import _merge_extractor_args, _cookiefile_has_youtube_cookies
 
 def _list_media_files(dir_path: str) -> list[str]:
     files = []
@@ -85,6 +85,21 @@ def quick_download(url: str) -> dict:
         caption = (info.get("description") or info.get("title") or "").strip()
         return {"success": True, "file_paths": files, "caption": caption, "dir_to_clean": unique_dir}
     except Exception as e:
+        msg = str(e)
+        m = msg.lower()
+        if "sign in to confirm you’re not a bot" in m or "sign in to confirm you're not a bot" in m:
+            cookiefile = (ydl_opts or {}).get("cookiefile")
+            cookie_hint = ""
+            try:
+                if cookiefile and os.path.exists(str(cookiefile)) and not _cookiefile_has_youtube_cookies(str(cookiefile)):
+                    cookie_hint = " Current cookies.txt does not include youtube.com/google.com cookies."
+            except Exception:
+                cookie_hint = ""
+            msg = (
+                "YouTube requires verification (anti-bot). "
+                "Add a valid cookies.txt (YTDLP_COOKIE_FILE) or set YTDLP_COOKIES_FROM_BROWSER."
+                + cookie_hint
+            )
         try:
             for f in _list_media_files(unique_dir):
                 try:
@@ -97,5 +112,4 @@ def quick_download(url: str) -> dict:
                 pass
         except Exception:
             pass
-        return {"success": False, "error": str(e)}
-
+        return {"success": False, "error": msg}
