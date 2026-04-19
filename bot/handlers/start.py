@@ -83,9 +83,9 @@ async def process_set_mode(callback: CallbackQuery):
     
     await set_user_mode(user_id, mode)
     
-    text = "✅ Video mode selected." if lang == 'en' else "✅ حالت ویدیو انتخاب شد."
+    text = get_text(lang, "mode_video_set")
     if mode == 'audio':
-        text = "✅ Audio mode selected." if lang == 'en' else "✅ حالت صدا انتخاب شد."
+        text = get_text(lang, "mode_audio_set")
         
     await callback.answer(text, show_alert=True)
 
@@ -105,7 +105,7 @@ async def process_menu_callbacks(callback: CallbackQuery):
         await _show_files(callback, user_id, lang, page=0)
     elif action == 'settings':
         await callback.message.edit_text(
-            "⚙️ Settings / تنظیمات", 
+            get_text(lang, "settings_title"),
             reply_markup=settings_menu(lang)
         )
     elif action == 'contact':

@@ -18,23 +18,22 @@ def is_admin(user_id: int) -> bool:
 async def cmd_admin_panel(message: Message):
     if not is_admin(message.from_user.id):
         return
+    lang = await get_user_language(message.from_user.id)
 
     total_users = await get_total_users()
     total_dl = await get_total_downloads()
     active_24h = await get_active_users(1)
     
     stats_text = (
-        "👑 **Admin Analytics Panel** 👑\n\n"
-        f"👥 **Total Users:** `{total_users}`\n"
-        f"🔥 **Active (24h):** `{active_24h}`\n"
-        f"📥 **Total Downloads:** `{total_dl}`\n\n"
-        "Commands:\n"
-        "/logs - View recent downloads\n"
-        "/db - Download database backup\n"
-        "/users - Users list\n"
+        f"{get_text(lang, 'admin_panel_title')}\n\n"
+        f"👥 users: `{total_users}`\n"
+        f"🔥 active(24h): `{active_24h}`\n"
+        f"📥 downloads: `{total_dl}`\n\n"
+        "/logs\n"
+        "/db\n"
+        "/users\n"
         "/setpremium <user_id>\n"
-        "/unsetpremium <user_id>\n"
-        "/broadcast <message> - Send to all users (Soon)"
+        "/unsetpremium <user_id>"
     )
     
     await message.answer(stats_text, parse_mode="Markdown")
@@ -43,13 +42,14 @@ async def cmd_admin_panel(message: Message):
 async def cmd_admin_logs(message: Message):
     if not is_admin(message.from_user.id):
         return
+    lang = await get_user_language(message.from_user.id)
 
     recent = await get_recent_downloads(10)
     if not recent:
-        await message.answer("No recent downloads found.")
+        await message.answer(get_text(lang, "admin_no_recent"))
         return
         
-    logs_text = "📜 **Last 10 Downloads:**\n\n"
+    logs_text = f"{get_text(lang, 'admin_logs_title')}\n\n"
     for user_id, username, url, dl_type, time in recent:
         user_display = f"@{username}" if username else f"ID:{user_id}"
         domain = url.split('/')[2] if '//' in url else url[:15]
@@ -61,12 +61,13 @@ async def cmd_admin_logs(message: Message):
 async def cmd_admin_db(message: Message):
     if not is_admin(message.from_user.id):
         return
+    lang = await get_user_language(message.from_user.id)
 
     if os.path.exists(config.db_path):
         db_file = FSInputFile(config.db_path, filename="backup_bot.db")
-        await message.answer_document(db_file, caption="📦 Database Backup")
+        await message.answer_document(db_file, caption=get_text(lang, "admin_db_caption"))
     else:
-        await message.answer("Database file not found!")
+        await message.answer(get_text(lang, "admin_db_missing"))
 
 @router.message(Command("users"))
 async def cmd_admin_users(message: Message):
