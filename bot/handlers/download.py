@@ -5,6 +5,7 @@ import random
 import re
 import shutil
 import uuid
+from urllib.parse import urlparse
 from aiogram import Router, F
 from aiogram.types import Message, FSInputFile, CallbackQuery
 from bot.models.database import (
@@ -21,7 +22,8 @@ from bot.utils.queue_manager import queue_manager
 from bot.config.settings import config
 from bot.downloaders.ytdlp_wrapper import download_media, probe_media
 from bot.downloaders.spotdl_wrapper import download_spotify
-from bot.downloaders.spotify_fallback import download_spotify_fallback
+from bot.downloaders.spotify_fallback import download_spotify_fallback, iter_spotify_fallback
+from bot.downloaders.quick_ytdlp import quick_download
 from bot.downloaders.http_fallback import download_direct_file
 from bot.utils.telegram_compress import compress_video_to_size, compress_audio_to_size
 from bot.utils.video_tools import probe_video, extract_thumbnail
@@ -35,6 +37,156 @@ URL_REGEX = re.compile(r'https?://[^\s]+')
 def _is_spotify_url(u: str) -> bool:
     s = (u or "").lower()
     return "spotify.com" in s or "open.spotify.com" in s or "spotify.link" in s
+
+def _is_x_url(u: str) -> bool:
+    s = (u or "").lower()
+    return "x.com/" in s or "twitter.com/" in s or "t.co/" in s
+
+def _is_long_video_site(u: str) -> bool:
+    try:
+        host = (urlparse(u).netloc or "").lower()
+    except Exception:
+        host = ""
+    return any(
+        h in host
+        for h in (
+            "youtube.com",
+            "youtu.be",
+            "pornhub.com",
+            "vk.com",
+        )
+    )
+
+async def _send_quick_files(message: Message, caption_top: str | None, result: dict):
+    files = list(result.get("file_paths") or [])
+    caption = (caption_top or "").strip()
+    if caption:
+        await message.answer(caption)
+
+    loop = asyncio.get_event_loop()
+    for fp in files:
+        ext = os.path.splitext(fp)[1].lower()
+        if ext in (".jpg", ".jpeg", ".png", ".webp"):
+            await message.answer_photo(FSInputFile(fp))
+            continue
+        if ext in (".mp4", ".m4v", ".mov"):
+            try:
+                size = os.path.getsize(fp)
+            except Exception:
+                size = 0
+            max_upload = int(getattr(config, "telegram_max_upload_bytes", 50 * 1024 * 1024))
+            if size and size > max_upload and bool(getattr(config, "telegram_enable_compression", True)):
+                target = max_upload
+                outp = os.path.join(config.download_dir, f"tg_{uuid.uuid4().hex}.mp4")
+                try:
+                    await loop.run_in_executor(
+                        None,
+                        compress_video_to_size,
+                        fp,
+                        outp,
+                        target,
+                        None,
+                        720,
+                        int(getattr(config, "telegram_compress_timeout", 120)),
+                    )
+                    try:
+                        os.remove(fp)
+                    except Exception:
+                        pass
+                    fp = outp
+                except Exception:
+                    try:
+                        if os.path.exists(outp):
+                            os.remove(outp)
+                    except Exception:
+                        pass
+
+            meta = {}
+            try:
+                meta = await loop.run_in_executor(None, probe_video, fp)
+            except Exception:
+                meta = {}
+            d = meta.get("duration")
+            duration_s = int(d) if d else None
+            thumb_path = None
+            try:
+                thumb_path = os.path.join(config.download_dir, f"thumb_{uuid.uuid4().hex}.jpg")
+                await loop.run_in_executor(None, extract_thumbnail, fp, thumb_path)
+            except Exception:
+                thumb_path = None
+            try:
+                kwargs = {"supports_streaming": True}
+                if duration_s:
+                    kwargs["duration"] = duration_s
+                if meta.get("width"):
+                    kwargs["width"] = int(meta["width"])
+                if meta.get("height"):
+                    kwargs["height"] = int(meta["height"])
+                if thumb_path and os.path.exists(thumb_path):
+                    kwargs["thumbnail"] = FSInputFile(thumb_path)
+                await message.answer_video(FSInputFile(fp), **kwargs)
+            finally:
+                if thumb_path and os.path.exists(thumb_path):
+                    try:
+                        os.remove(thumb_path)
+                    except Exception:
+                        pass
+            continue
+        await message.answer_document(FSInputFile(fp))
+
+async def _handle_x_message(message: Message, user_id: int, lang: str, url: str):
+    if not await check_rate_limit(user_id, config.daily_limit):
+        await message.answer(get_text(lang, 'rate_limit', limit=config.daily_limit))
+        return
+
+    position = await queue_manager.acquire()
+    status_msg = await message.answer(get_text(lang, 'queued', position=position))
+    await queue_manager.wait_and_acquire()
+    try:
+        await status_msg.edit_text(get_text(lang, 'downloading'))
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, quick_download, url)
+        if not result.get("success"):
+            await status_msg.edit_text(get_text(lang, 'error', error=result.get("error", "Download failed")))
+            return
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+        await _send_quick_files(message, result.get("caption"), result)
+        await log_download(user_id, url, "video")
+    finally:
+        dir_to_clean = result.get("dir_to_clean") if isinstance(locals().get("result"), dict) else None
+        if dir_to_clean and os.path.exists(dir_to_clean):
+            shutil.rmtree(dir_to_clean, ignore_errors=True)
+        queue_manager.release()
+
+async def _handle_quick_message(message: Message, user_id: int, lang: str, url: str):
+    if not await check_rate_limit(user_id, config.daily_limit):
+        await message.answer(get_text(lang, 'rate_limit', limit=config.daily_limit))
+        return
+
+    position = await queue_manager.acquire()
+    status_msg = await message.answer(get_text(lang, 'queued', position=position))
+    await queue_manager.wait_and_acquire()
+    try:
+        await status_msg.edit_text(get_text(lang, 'downloading'))
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, quick_download, url)
+        if not result.get("success"):
+            await status_msg.edit_text(get_text(lang, 'error', error=result.get("error", "Download failed")))
+            return
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+        await _send_quick_files(message, None, result)
+        await log_download(user_id, url, "video")
+    finally:
+        dir_to_clean = result.get("dir_to_clean") if isinstance(locals().get("result"), dict) else None
+        if dir_to_clean and os.path.exists(dir_to_clean):
+            shutil.rmtree(dir_to_clean, ignore_errors=True)
+        queue_manager.release()
 
 async def _send_spotify_result(message: Message, lang: str, user_id: int, url: str, result: dict):
     spotify_files = result.get('file_paths') or []
@@ -135,10 +287,68 @@ async def _handle_spotify_message(message: Message, user_id: int, lang: str, url
                 await status_msg.edit_text(get_text(lang, 'downloading') + "\n\nYouTube fallback…")
             except Exception:
                 pass
-            result = await download_spotify_fallback(url, max_tracks=50)
-            if not result.get("success"):
-                await status_msg.edit_text(get_text(lang, 'error', error=result.get("error", "Spotify download failed")))
+
+            cover_path = None
+            title = "Spotify"
+            tracks = []
+            sent_any = False
+
+            try:
+                i = 0
+                async for ev in iter_spotify_fallback(url, max_tracks=50):
+                    if ev.get("type") == "error":
+                        raise RuntimeError(ev.get("error") or "Spotify fallback failed")
+                    if ev.get("type") == "cover":
+                        title = ev.get("title") or title
+                        cover_path = ev.get("cover_path")
+                        tracks = ev.get("tracks") or []
+                        try:
+                            await status_msg.delete()
+                        except Exception:
+                            pass
+                        if cover_path and os.path.exists(cover_path):
+                            await message.answer_photo(FSInputFile(cover_path), caption=title)
+                        continue
+                    if ev.get("type") == "track":
+                        i += 1
+                        fp = ev.get("file_path")
+                        track = ev.get("track") or {}
+                        if not fp:
+                            continue
+                        try:
+                            meta = {}
+                            try:
+                                meta = await asyncio.get_event_loop().run_in_executor(None, probe_audio, fp)
+                            except Exception:
+                                meta = {}
+                            performer = (track.get("artist") or meta.get("artist"))
+                            track_title = (track.get("title") or meta.get("title") or os.path.splitext(os.path.basename(fp))[0])
+                            d = meta.get("duration")
+                            duration_s = int(d) if d else None
+                            kwargs = {"performer": performer, "title": track_title}
+                            if duration_s:
+                                kwargs["duration"] = duration_s
+                            if cover_path and os.path.exists(cover_path):
+                                kwargs["thumbnail"] = FSInputFile(cover_path)
+                            await message.answer_audio(FSInputFile(fp), **{k: v for k, v in kwargs.items() if v})
+                            sent_any = True
+                        finally:
+                            try:
+                                if os.path.exists(fp):
+                                    os.remove(fp)
+                            except Exception:
+                                pass
+
+                if not sent_any:
+                    raise RuntimeError("No matches found on YouTube")
+                await log_download(user_id, url, "audio")
                 return
+            finally:
+                if cover_path and os.path.exists(cover_path):
+                    try:
+                        os.remove(cover_path)
+                    except Exception:
+                        pass
 
         try:
             await status_msg.delete()
@@ -173,12 +383,19 @@ async def process_url(message: Message):
         if _is_spotify_url(clean_url):
             await _handle_spotify_message(message, user_id, lang, clean_url)
             continue
+        if _is_x_url(clean_url):
+            await _handle_x_message(message, user_id, lang, clean_url)
+            continue
+        if not _is_long_video_site(clean_url):
+            await _handle_quick_message(message, user_id, lang, clean_url)
+            continue
         pending_id = await create_pending_download(user_id, clean_url)
         kb = None
         try:
-            info = await asyncio.wait_for(probe_media(clean_url), timeout=12)
-            if info.get("success"):
-                kb = download_quality_menu(lang, pending_id, info.get("video_options"), info.get("duration"))
+            if _is_long_video_site(clean_url):
+                info = await asyncio.wait_for(probe_media(clean_url), timeout=12)
+                if info.get("success"):
+                    kb = download_quality_menu(lang, pending_id, info.get("video_options"), info.get("duration"))
         except Exception:
             kb = None
         await message.reply(

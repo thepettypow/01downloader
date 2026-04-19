@@ -362,3 +362,46 @@ async def download_spotify_fallback(url: str, max_tracks: int = 50) -> dict:
         "cover_path": cover_path,
         "tracks": tracks,
     }
+
+async def iter_spotify_fallback(url: str, max_tracks: int = 50):
+    url = await resolve_spotify_url(url)
+    oembed = await fetch_spotify_oembed(url)
+    cover_url = (oembed or {}).get("thumbnail_url")
+    title = (oembed or {}).get("title") or "Spotify"
+
+    tracks: list[dict] = []
+    if "/track/" in url:
+        tracks = [{"title": title, "artist": (oembed or {}).get("author_name"), "album": None}]
+    else:
+        scraped = await scrape_tracklist(url)
+        if scraped.get("success") and scraped.get("tracks"):
+            tracks = scraped["tracks"]
+            title = scraped.get("title") or title
+            cover_url = scraped.get("cover_url") or cover_url
+        else:
+            yield {"type": "error", "error": scraped.get("error") or "Unable to extract Spotify track list"}
+            return
+
+    tracks = tracks[:max_tracks]
+    if not tracks:
+        yield {"type": "error", "error": "No tracks found"}
+        return
+
+    cover_path = await _download_cover(cover_url) if cover_url else None
+    yield {"type": "cover", "title": title, "cover_path": cover_path, "tracks": tracks}
+
+    for t in tracks:
+        q_artist = (t.get("artist") or "").strip()
+        q_title = (t.get("title") or "").strip()
+        query = f"{q_artist} - {q_title}".strip(" -")
+        y = await download_media(f"ytsearch1:{query}", mode="audio", audio_bitrate_kbps=192)
+        if not y.get("success"):
+            err = (y.get("error") or "")
+            if "sign in to confirm you" in err.lower():
+                yield {
+                    "type": "error",
+                    "error": "YouTube is blocking downloads (anti-bot). Add cookies.txt for youtube.com/music.youtube.com to data/cookies.txt.",
+                }
+                return
+            continue
+        yield {"type": "track", "track": t, "file_path": y["file_path"]}
