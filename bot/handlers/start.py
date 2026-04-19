@@ -1,9 +1,9 @@
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command
-from bot.models.database import upsert_user, set_user_language, get_user_language, set_user_mode
+from bot.models.database import upsert_user, set_user_language, get_user_language, set_user_mode, get_user
 from bot.utils.locales import get_text
-from bot.utils.keyboards import main_menu_inline, settings_menu
+from bot.utils.keyboards import main_menu_inline, settings_menu, language_menu
 import aiosqlite
 from bot.config.settings import config
 
@@ -14,14 +14,17 @@ async def cmd_start(message: Message):
     user_id = message.from_user.id
     username = message.from_user.username or message.from_user.first_name
     await upsert_user(user_id, username)
-    
-    # Get user language from DB
+
+    user = await get_user(user_id)
+    selected = True
+    if user and len(user) >= 6:
+        selected = bool(user[5])
+    if not selected:
+        await message.answer(get_text("en", "choose_language"), reply_markup=language_menu())
+        return
+
     lang = await get_user_language(user_id)
-    
-    await message.answer(
-        get_text(lang, 'welcome', user_id=user_id),
-        reply_markup=main_menu_inline(lang)
-    )
+    await message.answer(get_text(lang, 'welcome', user_id=user_id), reply_markup=main_menu_inline(lang))
 
 @router.callback_query(F.data.startswith('lang_'))
 async def process_language(callback: CallbackQuery):

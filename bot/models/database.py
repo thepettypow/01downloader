@@ -30,6 +30,12 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        async with db.execute("PRAGMA table_info(users)") as cursor:
+            rows = await cursor.fetchall()
+        cols = {r[1] for r in (rows or []) if r and len(r) > 1}
+        if "language_selected" not in cols:
+            await db.execute("ALTER TABLE users ADD COLUMN language_selected INTEGER DEFAULT 0")
+            await db.execute("UPDATE users SET language_selected = 1 WHERE language IS NOT NULL AND TRIM(language) != ''")
         await db.commit()
 
 async def get_user(user_id: int):
@@ -48,7 +54,7 @@ async def upsert_user(user_id: int, username: str):
 
 async def set_user_language(user_id: int, language: str):
     async with aiosqlite.connect(config.db_path) as db:
-        await db.execute('UPDATE users SET language = ? WHERE user_id = ?', (language, user_id))
+        await db.execute('UPDATE users SET language = ?, language_selected = 1 WHERE user_id = ?', (language, user_id))
         await db.commit()
 
 async def get_user_language(user_id: int) -> str:

@@ -9,6 +9,17 @@ def _fmt_mb(size_bytes: int) -> str:
     except Exception:
         return ""
 
+def language_menu():
+    from bot.utils.locales import get_text
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=get_text("en", "btn_lang_en"), callback_data="lang_en"),
+                InlineKeyboardButton(text=get_text("en", "btn_lang_fa"), callback_data="lang_fa"),
+            ]
+        ]
+    )
+
 def download_quality_menu(lang: str, pending_id: int, video_options: list[dict] | None, duration_s: int | None):
     from bot.utils.locales import get_text
     video_options = list(video_options or [])
