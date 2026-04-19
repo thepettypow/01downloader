@@ -378,10 +378,18 @@ async def _handle_spotify_message(message: Message, user_id: int, lang: str, url
             consumed_total = 0
 
             try:
+                async def notify_error(err: str) -> None:
+                    text = get_text(lang, "error", error=to_user_friendly_error(lang, err))
+                    try:
+                        await status_msg.edit_text(text)
+                    except Exception:
+                        await message.answer(text)
+
                 i = 0
                 async for ev in iter_spotify_fallback(url, max_tracks=50):
                     if ev.get("type") == "error":
-                        raise RuntimeError(ev.get("error") or "Spotify fallback failed")
+                        await notify_error(ev.get("error") or "Spotify fallback failed")
+                        return
                     if ev.get("type") == "cover":
                         title = ev.get("title") or title
                         cover_path = ev.get("cover_path")
@@ -407,7 +415,7 @@ async def _handle_spotify_message(message: Message, user_id: int, lang: str, url
                         ok, quota_msg = await _check_quota(user_id, lang, track_bytes)
                         if not ok:
                             await message.answer(quota_msg)
-                            break
+                            return
                         try:
                             meta = {}
                             try:
@@ -435,7 +443,8 @@ async def _handle_spotify_message(message: Message, user_id: int, lang: str, url
                                 pass
 
                 if not sent_any:
-                    raise RuntimeError("No matches found on YouTube")
+                    await notify_error("No matches found on YouTube")
+                    return
                 await log_download(user_id, url, "audio", bytes_used=consumed_total, title=title)
                 return
             finally:

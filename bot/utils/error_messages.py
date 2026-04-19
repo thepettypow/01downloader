@@ -23,6 +23,9 @@ def to_user_friendly_error(lang: str, err: str) -> str:
     if "timed out" in low or "timeout" in low:
         return fa("دانلود/پردازش زمان‌بر شد. لطفاً کیفیت پایین‌تر انتخاب کنید و دوباره تلاش کنید.", "Download/processing timed out. Try a lower quality and retry.")
 
+    if "no matches found on youtube" in low or "no matches found" in low:
+        return fa("برای این مورد در جستجوی یوتیوب نتیجه‌ای پیدا نشد. لطفاً بعداً دوباره تلاش کنید یا از حالت spotdl استفاده کنید.", "No matches were found on YouTube for this Spotify item. Try again later or enable spotdl.")
+
     if "http error" in low:
         return fa("لینک مستقیم معتبر نیست یا سرور فایل خطا داد.", "The direct link is not valid or the server returned an error.")
 
@@ -33,4 +36,3 @@ def to_user_friendly_error(lang: str, err: str) -> str:
         return fa("مشکل موقت شبکه/سرور. لطفاً کمی بعد دوباره تلاش کنید.", "Temporary network/server issue. Please try again later.")
 
     return fa("دانلود ناموفق بود. لطفاً بعداً دوباره تلاش کنید.", "Download failed. Please try again later.")
-
