@@ -136,3 +136,42 @@ def download_choice_menu(lang: str, pending_id: int):
             [InlineKeyboardButton(text=get_text(lang, 'btn_cancel'), callback_data=f'dl:{pending_id}:cancel')],
         ]
     )
+
+def pager_menu(lang: str, prev_cb: str | None, next_cb: str | None, back_cb: str | None = None):
+    from bot.utils.locales import get_text
+    rows = []
+    nav = []
+    if prev_cb:
+        nav.append(InlineKeyboardButton(text=get_text(lang, "btn_prev"), callback_data=prev_cb))
+    if next_cb:
+        nav.append(InlineKeyboardButton(text=get_text(lang, "btn_next"), callback_data=next_cb))
+    if nav:
+        rows.append(nav)
+    if back_cb:
+        rows.append([InlineKeyboardButton(text=get_text(lang, "btn_back"), callback_data=back_cb)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+def users_list_menu(lang: str, users: list[tuple], page: int, has_next: bool):
+    from bot.utils.locales import get_text
+    rows = []
+    for u in users:
+        user_id = int(u[0])
+        username = (u[1] or "").strip()
+        label = f"@{username}" if username else str(user_id)
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"admin_user:{user_id}:0")])
+    prev_cb = f"admin_users:{page - 1}" if page > 0 else None
+    next_cb = f"admin_users:{page + 1}" if has_next else None
+    nav = []
+    if prev_cb:
+        nav.append(InlineKeyboardButton(text=get_text(lang, "btn_prev"), callback_data=prev_cb))
+    if next_cb:
+        nav.append(InlineKeyboardButton(text=get_text(lang, "btn_next"), callback_data=next_cb))
+    if nav:
+        rows.append(nav)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+def user_downloads_menu(lang: str, user_id: int, page: int, has_next: bool):
+    from bot.utils.locales import get_text
+    prev_cb = f"admin_user:{user_id}:{page - 1}" if page > 0 else None
+    next_cb = f"admin_user:{user_id}:{page + 1}" if has_next else None
+    return pager_menu(lang, prev_cb, next_cb, back_cb=f"admin_users:{0}")

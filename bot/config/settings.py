@@ -4,10 +4,16 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     bot_token: str
     admin_ids: List[int] = []
+    premium_ids: List[int] = []
     db_path: str = "data/bot.db"
     download_dir: str = "downloads"
     max_concurrent_downloads: int = 4
     daily_limit: int = 50
+    free_daily_quota_gb: int = 10
+    premium_daily_quota_gb: int = 50
+    referral_bonus_gb: int = 1
+    support_channel: str = "https://t.me/sefroyeki"
+    quota_timezone: str = "Asia/Tehran"
     ytdlp_cookie_file: Optional[str] = None
     ytdlp_cookies_from_browser: Optional[str] = None
     ytdlp_proxy: Optional[str] = None

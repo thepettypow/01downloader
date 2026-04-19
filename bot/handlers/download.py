@@ -15,6 +15,8 @@ from bot.models.database import (
     create_pending_download,
     get_pending_download,
     delete_pending_download,
+    can_consume,
+    consume_bytes,
 )
 from bot.utils.locales import get_text
 from bot.utils.keyboards import download_choice_menu, download_quality_menu
@@ -28,11 +30,20 @@ from bot.downloaders.http_fallback import download_direct_file
 from bot.utils.telegram_compress import compress_video_to_size, compress_audio_to_size
 from bot.utils.video_tools import probe_video, extract_thumbnail
 from bot.utils.audio_tools import probe_audio, extract_audio_cover
+from bot.utils.error_messages import to_user_friendly_error
+from bot.utils.formatting import format_bytes
 
 router = Router()
 logger = logging.getLogger(__name__)
 
 URL_REGEX = re.compile(r'https?://[^\s]+')
+
+async def _check_quota(user_id: int, lang: str, bytes_needed: int) -> tuple[bool, str]:
+    ok, used, limit = await can_consume(user_id, bytes_needed)
+    if ok:
+        return True, ""
+    remaining = max(0, int(limit) - int(used))
+    return False, get_text(lang, "quota_exceeded", remaining=format_bytes(remaining))
 
 def _is_spotify_url(u: str) -> bool:
     s = (u or "").lower()
@@ -180,14 +191,28 @@ async def _handle_x_message(message: Message, user_id: int, lang: str, url: str)
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, quick_download, url)
         if not result.get("success"):
-            await status_msg.edit_text(get_text(lang, 'error', error=result.get("error", "Download failed")))
+            await status_msg.edit_text(get_text(lang, 'error', error=to_user_friendly_error(lang, result.get("error", ""))))
+            return
+        total_bytes = 0
+        for fp in list(result.get("file_paths") or []):
+            try:
+                total_bytes += int(os.path.getsize(fp))
+            except Exception:
+                pass
+        ok, quota_msg = await _check_quota(user_id, lang, total_bytes)
+        if not ok:
+            await status_msg.edit_text(quota_msg)
             return
         try:
             await status_msg.delete()
         except Exception:
             pass
-        await _send_quick_files(message, lang, result.get("caption"), result)
-        await log_download(user_id, url, "video")
+        try:
+            await _send_quick_files(message, lang, result.get("caption"), result)
+            await consume_bytes(user_id, total_bytes)
+            await log_download(user_id, url, "video", bytes_used=total_bytes, title=(result.get("caption") or ""))
+        except Exception as e:
+            await message.answer(get_text(lang, "error", error=to_user_friendly_error(lang, str(e))))
     finally:
         dir_to_clean = result.get("dir_to_clean") if isinstance(locals().get("result"), dict) else None
         if dir_to_clean and os.path.exists(dir_to_clean):
@@ -207,14 +232,28 @@ async def _handle_quick_message(message: Message, user_id: int, lang: str, url: 
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, quick_download, url)
         if not result.get("success"):
-            await status_msg.edit_text(get_text(lang, 'error', error=result.get("error", "Download failed")))
+            await status_msg.edit_text(get_text(lang, 'error', error=to_user_friendly_error(lang, result.get("error", ""))))
+            return
+        total_bytes = 0
+        for fp in list(result.get("file_paths") or []):
+            try:
+                total_bytes += int(os.path.getsize(fp))
+            except Exception:
+                pass
+        ok, quota_msg = await _check_quota(user_id, lang, total_bytes)
+        if not ok:
+            await status_msg.edit_text(quota_msg)
             return
         try:
             await status_msg.delete()
         except Exception:
             pass
-        await _send_quick_files(message, lang, result.get("caption"), result)
-        await log_download(user_id, url, "video")
+        try:
+            await _send_quick_files(message, lang, result.get("caption"), result)
+            await consume_bytes(user_id, total_bytes)
+            await log_download(user_id, url, "video", bytes_used=total_bytes, title=(result.get("caption") or ""))
+        except Exception as e:
+            await message.answer(get_text(lang, "error", error=to_user_friendly_error(lang, str(e))))
     finally:
         dir_to_clean = result.get("dir_to_clean") if isinstance(locals().get("result"), dict) else None
         if dir_to_clean and os.path.exists(dir_to_clean):
@@ -229,7 +268,17 @@ async def _send_spotify_result(message: Message, lang: str, user_id: int, url: s
     tracks = result.get("tracks") or []
     try:
         if not spotify_files:
-            await message.answer(get_text(lang, 'error', error="Spotify download returned no files"))
+            await message.answer(get_text(lang, 'error', error=to_user_friendly_error(lang, "")))
+            return
+        total_bytes = 0
+        for fp in spotify_files:
+            try:
+                total_bytes += int(os.path.getsize(fp))
+            except Exception:
+                pass
+        ok, quota_msg = await _check_quota(user_id, lang, total_bytes)
+        if not ok:
+            await message.answer(quota_msg)
             return
 
         loop = asyncio.get_event_loop()
@@ -263,7 +312,8 @@ async def _send_spotify_result(message: Message, lang: str, user_id: int, url: s
                 kwargs["thumbnail"] = FSInputFile(thumb_path)
             await message.answer_audio(FSInputFile(fp), **{k: v for k, v in kwargs.items() if v})
 
-        await log_download(user_id, url, "audio")
+        await consume_bytes(user_id, total_bytes)
+        await log_download(user_id, url, "audio", bytes_used=total_bytes, title=title)
     finally:
         if cover_path and os.path.exists(cover_path):
             try:
@@ -325,6 +375,7 @@ async def _handle_spotify_message(message: Message, user_id: int, lang: str, url
             title = "Spotify"
             tracks = []
             sent_any = False
+            consumed_total = 0
 
             try:
                 i = 0
@@ -348,6 +399,15 @@ async def _handle_spotify_message(message: Message, user_id: int, lang: str, url
                         track = ev.get("track") or {}
                         if not fp:
                             continue
+                        track_bytes = 0
+                        try:
+                            track_bytes = int(os.path.getsize(fp))
+                        except Exception:
+                            track_bytes = 0
+                        ok, quota_msg = await _check_quota(user_id, lang, track_bytes)
+                        if not ok:
+                            await message.answer(quota_msg)
+                            break
                         try:
                             meta = {}
                             try:
@@ -364,6 +424,8 @@ async def _handle_spotify_message(message: Message, user_id: int, lang: str, url
                             if cover_path and os.path.exists(cover_path):
                                 kwargs["thumbnail"] = FSInputFile(cover_path)
                             await message.answer_audio(FSInputFile(fp), **{k: v for k, v in kwargs.items() if v})
+                            await consume_bytes(user_id, track_bytes)
+                            consumed_total += track_bytes
                             sent_any = True
                         finally:
                             try:
@@ -374,7 +436,7 @@ async def _handle_spotify_message(message: Message, user_id: int, lang: str, url
 
                 if not sent_any:
                     raise RuntimeError("No matches found on YouTube")
-                await log_download(user_id, url, "audio")
+                await log_download(user_id, url, "audio", bytes_used=consumed_total, title=title)
                 return
             finally:
                 if cover_path and os.path.exists(cover_path):
@@ -561,7 +623,7 @@ async def process_download_choice(callback: CallbackQuery):
                 finally:
                     ticker_task.cancel()
             except asyncio.TimeoutError:
-                await callback.message.edit_text(get_text(lang, 'error', error="Download timed out. Try a lower quality."))
+                await callback.message.edit_text(get_text(lang, 'error', error=to_user_friendly_error(lang, "timeout")))
                 return
             download_type = requested_mode
 
@@ -573,7 +635,7 @@ async def process_download_choice(callback: CallbackQuery):
                     download_type = 'audio' if result['file_path'].endswith('.mp3') else 'video'
 
             if not result.get('success'):
-                await callback.message.edit_text(get_text(lang, 'error', error=result.get('error', 'Unknown Error')))
+                await callback.message.edit_text(get_text(lang, 'error', error=to_user_friendly_error(lang, result.get('error', ''))))
                 return
 
         spotify_files = result.get('file_paths')
@@ -591,6 +653,16 @@ async def process_download_choice(callback: CallbackQuery):
             if 'spotify.com' in url and spotify_files:
                 loop = asyncio.get_event_loop()
                 cover_path = None
+                total_bytes = 0
+                for fp in spotify_files:
+                    try:
+                        total_bytes += int(os.path.getsize(fp))
+                    except Exception:
+                        pass
+                ok, quota_msg = await _check_quota(user_id, lang, total_bytes)
+                if not ok:
+                    await callback.message.edit_text(quota_msg)
+                    return
                 try:
                     cover_path = os.path.join(config.download_dir, f"cover_{uuid.uuid4().hex}.jpg")
                     await loop.run_in_executor(None, extract_audio_cover, spotify_files[0], cover_path)
@@ -636,7 +708,8 @@ async def process_download_choice(callback: CallbackQuery):
                             except Exception:
                                 pass
 
-                await log_download(user_id, url, "audio")
+                await consume_bytes(user_id, total_bytes)
+                await log_download(user_id, url, "audio", bytes_used=total_bytes, title=title)
                 try:
                     await callback.message.delete()
                 except Exception:
@@ -674,7 +747,7 @@ async def process_download_choice(callback: CallbackQuery):
             except Exception:
                 current_size = 0
             if current_size and current_size > hard_limit:
-                await callback.message.edit_text(get_text(lang, 'error', error="File is larger than 2GB and cannot be uploaded by the bot."))
+                await callback.message.edit_text(get_text(lang, 'error', error=to_user_friendly_error(lang, "file is larger than 2gb")))
                 return
 
             async def send_once():
@@ -780,6 +853,15 @@ async def process_download_choice(callback: CallbackQuery):
                 if new_path:
                     file_path = new_path
 
+            try:
+                charge_bytes = int(os.path.getsize(file_path))
+            except Exception:
+                charge_bytes = 0
+            ok, quota_msg = await _check_quota(user_id, lang, charge_bytes)
+            if not ok:
+                await callback.message.edit_text(quota_msg)
+                return
+
             last_err = None
             max_attempts = 3
             for attempt in range(max_attempts):
@@ -835,14 +917,15 @@ async def process_download_choice(callback: CallbackQuery):
             if last_err is not None:
                 raise last_err
 
-            await log_download(user_id, url, download_type)
+            await consume_bytes(user_id, charge_bytes)
+            await log_download(user_id, url, download_type, bytes_used=charge_bytes, title=title)
             try:
                 await callback.message.delete()
             except Exception:
                 pass
         except Exception as e:
             logger.exception("send failed")
-            await callback.message.edit_text(get_text(lang, 'error', error=str(e)))
+            await callback.message.edit_text(get_text(lang, 'error', error=to_user_friendly_error(lang, str(e))))
         finally:
             if file_path and os.path.exists(file_path):
                 os.remove(file_path)
