@@ -42,6 +42,13 @@ def _is_x_url(u: str) -> bool:
     s = (u or "").lower()
     return "x.com/" in s or "twitter.com/" in s or "t.co/" in s
 
+def _is_instagram_url(u: str) -> bool:
+    try:
+        host = (urlparse(u).netloc or "").lower()
+    except Exception:
+        host = ""
+    return "instagram.com" in host or "instagr.am" in host
+
 def _is_long_video_site(u: str) -> bool:
     try:
         host = (urlparse(u).netloc or "").lower()
@@ -411,6 +418,13 @@ async def process_url(message: Message):
             continue
         if _is_x_url(clean_url):
             await _handle_x_message(message, user_id, lang, clean_url)
+            continue
+        if _is_instagram_url(clean_url):
+            pending_id = await create_pending_download(user_id, clean_url)
+            await message.reply(
+                get_text(lang, 'choose_format'),
+                reply_markup=download_choice_menu(lang, pending_id),
+            )
             continue
         if not _is_long_video_site(clean_url):
             await _handle_quick_message(message, user_id, lang, clean_url)
