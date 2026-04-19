@@ -315,6 +315,7 @@ def _download_sync(url: str, mode: str, max_height: int | None, audio_bitrate_kb
     for candidate in cookie_candidates:
         if candidate and os.path.exists(candidate):
             ydl_opts['cookiefile'] = candidate
+            logger.info("yt-dlp cookiefile=%s", candidate)
             break
     cookies_from_browser = (getattr(config, "ytdlp_cookies_from_browser", "") or "").strip()
     if cookies_from_browser:

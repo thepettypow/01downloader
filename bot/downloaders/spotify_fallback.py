@@ -14,6 +14,7 @@ _META_OG_RE = re.compile(r'<meta[^>]+property="og:(title|image)"[^>]+content="([
 _TRACK_ANCHOR_RE = re.compile(r'href="/track/([A-Za-z0-9]+)[^"]*"[^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL)
 _ARTIST_ANCHOR_RE = re.compile(r'href="/artist/([A-Za-z0-9]+)[^"]*"[^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL)
 _EMBED_ROW_RE = re.compile(r'<h3[^>]*>(.*?)</h3>.*?<h4[^>]*>(.*?)</h4>', re.IGNORECASE | re.DOTALL)
+_LD_JSON_RE = re.compile(r'<script[^>]+type="application/ld\\+json"[^>]*>(.*?)</script>', re.IGNORECASE | re.DOTALL)
 _TAG_RE = re.compile(r"<[^>]+>")
 
 def _dedupe_tracks(tracks: list[dict]) -> list[dict]:
@@ -78,6 +79,45 @@ def _parse_embed_html_tracklist(html: str) -> dict:
         tracks.append({"title": t, "artist": a or None, "album": title or None})
     tracks = _dedupe_tracks(tracks)
     return {"success": True, "title": title or None, "cover_url": cover_url, "tracks": tracks}
+
+def _parse_ld_json_tracklist(html: str) -> dict:
+    for m in _LD_JSON_RE.finditer(html or ""):
+        raw = (m.group(1) or "").strip()
+        if not raw:
+            continue
+        try:
+            data = json.loads(_html.unescape(raw))
+        except Exception:
+            continue
+        objs = data if isinstance(data, list) else [data]
+        for obj in objs:
+            if not isinstance(obj, dict):
+                continue
+            name = obj.get("name") or None
+            image = obj.get("image") or None
+            if isinstance(image, list) and image:
+                image = image[0]
+            track_items = obj.get("track") or obj.get("tracks") or []
+            if not track_items:
+                continue
+            tracks: list[dict] = []
+            for t in track_items if isinstance(track_items, list) else [track_items]:
+                if not isinstance(t, dict):
+                    continue
+                tname = t.get("name") or None
+                artist = None
+                by = t.get("byArtist") or t.get("artist")
+                if isinstance(by, dict):
+                    artist = by.get("name") or None
+                elif isinstance(by, list) and by:
+                    if isinstance(by[0], dict):
+                        artist = by[0].get("name") or None
+                if tname:
+                    tracks.append({"title": tname, "artist": artist, "album": name})
+            tracks = _dedupe_tracks(tracks)
+            if tracks:
+                return {"success": True, "title": name, "cover_url": image, "tracks": tracks}
+    return {"success": False}
 
 def _collect_tracks(obj, out: list[dict], album_name: str | None):
     if isinstance(obj, dict):
@@ -188,6 +228,9 @@ async def scrape_tracklist(url: str) -> dict:
         return {"success": False, "error": "Unable to load Spotify page"}
     m = _NEXT_DATA_RE.search(html)
     if not m:
+        ld = _parse_ld_json_tracklist(html)
+        if ld.get("success") and ld.get("tracks"):
+            return ld
         parsed = _parse_html_tracklist(html)
         if parsed.get("tracks"):
             return parsed
@@ -198,6 +241,9 @@ async def scrape_tracklist(url: str) -> dict:
     try:
         data = json.loads(m.group(1))
     except Exception:
+        ld = _parse_ld_json_tracklist(html)
+        if ld.get("success") and ld.get("tracks"):
+            return ld
         parsed = _parse_html_tracklist(html)
         if parsed.get("tracks"):
             return parsed
@@ -212,6 +258,9 @@ async def scrape_tracklist(url: str) -> dict:
     tracks = _dedupe_tracks(tracks)
     cover_url = _find_best_image(data)
     if not tracks:
+        ld = _parse_ld_json_tracklist(html)
+        if ld.get("success") and ld.get("tracks"):
+            return ld
         parsed = _parse_html_tracklist(html)
         if parsed.get("tracks"):
             return parsed
@@ -230,6 +279,9 @@ async def _try_embed(url: str) -> dict:
     html = await _http_get_text(embed_url)
     if not html:
         return {"success": False}
+    ld = _parse_ld_json_tracklist(html)
+    if ld.get("success") and ld.get("tracks"):
+        return ld
     parsed = _parse_embed_html_tracklist(html)
     if parsed.get("tracks"):
         return parsed
@@ -280,18 +332,27 @@ async def download_spotify_fallback(url: str, max_tracks: int = 50) -> dict:
     cover_path = await _download_cover(cover_url) if cover_url else None
 
     file_paths: list[str] = []
+    blocked = False
     for t in tracks:
         q_artist = (t.get("artist") or "").strip()
         q_title = (t.get("title") or "").strip()
         query = f"{q_artist} - {q_title}".strip(" -")
         y = await download_media(f"ytsearch1:{query}", mode="audio", audio_bitrate_kbps=192)
         if not y.get("success"):
+            if "sign in to confirm you" in (y.get("error") or "").lower():
+                blocked = True
+                break
             continue
         file_paths.append(y["file_path"])
 
     if not file_paths:
         if cover_path and os.path.exists(cover_path):
             os.remove(cover_path)
+        if blocked:
+            return {
+                "success": False,
+                "error": "YouTube is blocking downloads (anti-bot). Add cookies.txt for youtube.com/music.youtube.com to data/cookies.txt.",
+            }
         return {"success": False, "error": "No matches found on YouTube"}
 
     return {
