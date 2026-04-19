@@ -57,17 +57,41 @@ def _is_long_video_site(u: str) -> bool:
         )
     )
 
-async def _send_quick_files(message: Message, caption_top: str | None, result: dict):
+def _credit_suffix(lang: str) -> str:
+    username = (getattr(config, "telegram_credit_username", "") or "Ferestadam_bot").strip().lstrip("@")
+    if (lang or "").lower().startswith("fa"):
+        return f"دانلود شده با @{username}"
+    return f"Downloaded via @{username}"
+
+def _with_credit(caption: str | None, lang: str, max_len: int = 1024) -> str | None:
+    base = (caption or "").strip()
+    suffix = _credit_suffix(lang)
+    if not base:
+        out = suffix
+    else:
+        out = f"{base}\n\n{suffix}"
+    out = out.strip()
+    if not out:
+        return None
+    if len(out) <= max_len:
+        return out
+    if len(suffix) >= max_len:
+        return suffix[:max_len]
+    room = max_len - (len(suffix) + 2)
+    trimmed = base[: max(0, room)].rstrip()
+    return f"{trimmed}\n\n{suffix}".strip()
+
+async def _send_quick_files(message: Message, lang: str, caption_top: str | None, result: dict):
     files = list(result.get("file_paths") or [])
-    caption = (caption_top or "").strip()
-    if caption:
-        await message.answer(caption)
+    caption = _with_credit(caption_top, lang)
 
     loop = asyncio.get_event_loop()
+    caption_left = caption
     for fp in files:
         ext = os.path.splitext(fp)[1].lower()
         if ext in (".jpg", ".jpeg", ".png", ".webp"):
-            await message.answer_photo(FSInputFile(fp))
+            await message.answer_photo(FSInputFile(fp), caption=caption_left)
+            caption_left = None
             continue
         if ext in (".mp4", ".m4v", ".mov"):
             try:
@@ -124,7 +148,8 @@ async def _send_quick_files(message: Message, caption_top: str | None, result: d
                     kwargs["height"] = int(meta["height"])
                 if thumb_path and os.path.exists(thumb_path):
                     kwargs["thumbnail"] = FSInputFile(thumb_path)
-                await message.answer_video(FSInputFile(fp), **kwargs)
+                await message.answer_video(FSInputFile(fp), caption=caption_left, **kwargs)
+                caption_left = None
             finally:
                 if thumb_path and os.path.exists(thumb_path):
                     try:
@@ -132,7 +157,8 @@ async def _send_quick_files(message: Message, caption_top: str | None, result: d
                     except Exception:
                         pass
             continue
-        await message.answer_document(FSInputFile(fp))
+        await message.answer_document(FSInputFile(fp), caption=caption_left)
+        caption_left = None
 
 async def _handle_x_message(message: Message, user_id: int, lang: str, url: str):
     if not await check_rate_limit(user_id, config.daily_limit):
@@ -153,7 +179,7 @@ async def _handle_x_message(message: Message, user_id: int, lang: str, url: str)
             await status_msg.delete()
         except Exception:
             pass
-        await _send_quick_files(message, result.get("caption"), result)
+        await _send_quick_files(message, lang, result.get("caption"), result)
         await log_download(user_id, url, "video")
     finally:
         dir_to_clean = result.get("dir_to_clean") if isinstance(locals().get("result"), dict) else None
@@ -180,7 +206,7 @@ async def _handle_quick_message(message: Message, user_id: int, lang: str, url: 
             await status_msg.delete()
         except Exception:
             pass
-        await _send_quick_files(message, None, result)
+        await _send_quick_files(message, lang, result.get("caption"), result)
         await log_download(user_id, url, "video")
     finally:
         dir_to_clean = result.get("dir_to_clean") if isinstance(locals().get("result"), dict) else None
@@ -207,7 +233,7 @@ async def _send_spotify_result(message: Message, lang: str, user_id: int, url: s
             except Exception:
                 cover_path = None
         if cover_path and os.path.exists(cover_path):
-            await message.answer_photo(FSInputFile(cover_path), caption=title)
+            await message.answer_photo(FSInputFile(cover_path), caption=_with_credit(title, lang))
 
         for idx, fp in enumerate(spotify_files):
             meta = {}
@@ -307,7 +333,7 @@ async def _handle_spotify_message(message: Message, user_id: int, lang: str, url
                         except Exception:
                             pass
                         if cover_path and os.path.exists(cover_path):
-                            await message.answer_photo(FSInputFile(cover_path), caption=title)
+                            await message.answer_photo(FSInputFile(cover_path), caption=_with_credit(title, lang))
                         continue
                     if ev.get("type") == "track":
                         i += 1
@@ -640,8 +666,9 @@ async def process_download_choice(callback: CallbackQuery):
             async def send_once():
                 async def do_send():
                     media = FSInputFile(file_path)
+                    caption = _with_credit(title, lang)
                     if download_type == 'audio':
-                        return await callback.message.answer_audio(media, caption=title)
+                        return await callback.message.answer_audio(media, caption=caption)
                     ext = os.path.splitext(file_path)[1].lower()
                     if ext in ('.mp4', '.m4v', '.mov'):
                         loop = asyncio.get_event_loop()
@@ -667,14 +694,14 @@ async def process_download_choice(callback: CallbackQuery):
                                 kwargs["height"] = int(meta["height"])
                             if thumb_path and os.path.exists(thumb_path):
                                 kwargs["thumbnail"] = FSInputFile(thumb_path)
-                            return await callback.message.answer_video(media, caption=title, **kwargs)
+                            return await callback.message.answer_video(media, caption=caption, **kwargs)
                         finally:
                             if thumb_path and os.path.exists(thumb_path):
                                 try:
                                     os.remove(thumb_path)
                                 except Exception:
                                     pass
-                    return await callback.message.answer_document(media, caption=title)
+                    return await callback.message.answer_document(media, caption=caption)
 
                 return await asyncio.wait_for(
                     do_send(),

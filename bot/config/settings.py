@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     spotdl_client_id: Optional[str] = None
     spotdl_client_secret: Optional[str] = None
     spotify_use_spotdl: bool = False
+    telegram_credit_username: str = "Ferestadam_bot"
     telegram_api_base: Optional[str] = None
     telegram_is_local_api: bool = False
     telegram_request_timeout: int = 7200
