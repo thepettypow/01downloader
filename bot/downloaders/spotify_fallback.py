@@ -3,12 +3,17 @@ import json
 import os
 import re
 import uuid
+import html as _html
 import aiohttp
 
 from bot.config.settings import config
 from bot.downloaders.ytdlp_wrapper import download_media
 
 _NEXT_DATA_RE = re.compile(r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.DOTALL)
+_META_OG_RE = re.compile(r'<meta[^>]+property="og:(title|image)"[^>]+content="([^"]+)"', re.IGNORECASE)
+_TRACK_ANCHOR_RE = re.compile(r'href="/track/([A-Za-z0-9]+)[^"]*"[^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL)
+_ARTIST_ANCHOR_RE = re.compile(r'href="/artist/([A-Za-z0-9]+)[^"]*"[^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL)
+_TAG_RE = re.compile(r"<[^>]+>")
 
 def _dedupe_tracks(tracks: list[dict]) -> list[dict]:
     seen = set()
@@ -24,6 +29,38 @@ def _dedupe_tracks(tracks: list[dict]) -> list[dict]:
         seen.add(key)
         out.append(t)
     return out
+
+def _strip_tags(s: str) -> str:
+    s = _TAG_RE.sub("", s or "")
+    s = _html.unescape(s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+def _clean_og_title(t: str) -> str:
+    t = (t or "").strip()
+    if " | Spotify" in t:
+        t = t.split(" | Spotify", 1)[0].strip()
+    return t
+
+def _parse_html_tracklist(html: str) -> dict:
+    og = {k.lower(): v for (k, v) in _META_OG_RE.findall(html or "")}
+    title = _clean_og_title(og.get("title") or "")
+    cover_url = og.get("image")
+
+    tracks: list[dict] = []
+    for m in _TRACK_ANCHOR_RE.finditer(html or ""):
+        track_title = _strip_tags(m.group(2))
+        if not track_title:
+            continue
+        tail = (html or "")[m.end() : m.end() + 1200]
+        am = _ARTIST_ANCHOR_RE.search(tail)
+        artist = _strip_tags(am.group(2)) if am else None
+        if artist:
+            artist = re.sub(r"^\s*E\s*", "", artist).strip()
+        tracks.append({"title": track_title, "artist": artist, "album": title or None})
+
+    tracks = _dedupe_tracks(tracks)
+    return {"success": True, "title": title or None, "cover_url": cover_url, "tracks": tracks}
 
 def _collect_tracks(obj, out: list[dict], album_name: str | None):
     if isinstance(obj, dict):
@@ -91,7 +128,10 @@ def _find_best_image(obj) -> str | None:
 
 async def _http_get_json(url: str) -> dict | None:
     timeout = aiohttp.ClientTimeout(total=20)
-    headers = {"User-Agent": (config.ytdlp_user_agent or "Mozilla/5.0").strip() or "Mozilla/5.0"}
+    headers = {
+        "User-Agent": (config.ytdlp_user_agent or "Mozilla/5.0").strip() or "Mozilla/5.0",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
     async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
         async with session.get(url, allow_redirects=True) as resp:
             if resp.status != 200:
@@ -100,7 +140,11 @@ async def _http_get_json(url: str) -> dict | None:
 
 async def _http_get_text(url: str) -> str | None:
     timeout = aiohttp.ClientTimeout(total=25)
-    headers = {"User-Agent": (config.ytdlp_user_agent or "Mozilla/5.0").strip() or "Mozilla/5.0"}
+    headers = {
+        "User-Agent": (config.ytdlp_user_agent or "Mozilla/5.0").strip() or "Mozilla/5.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
     async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
         async with session.get(url, allow_redirects=True) as resp:
             if resp.status != 200:
@@ -109,7 +153,10 @@ async def _http_get_text(url: str) -> str | None:
 
 async def resolve_spotify_url(url: str) -> str:
     timeout = aiohttp.ClientTimeout(total=20)
-    headers = {"User-Agent": (config.ytdlp_user_agent or "Mozilla/5.0").strip() or "Mozilla/5.0"}
+    headers = {
+        "User-Agent": (config.ytdlp_user_agent or "Mozilla/5.0").strip() or "Mozilla/5.0",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
     async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
         async with session.get(url, allow_redirects=True) as resp:
             return str(resp.url)
@@ -124,10 +171,16 @@ async def scrape_tracklist(url: str) -> dict:
         return {"success": False, "error": "Unable to load Spotify page"}
     m = _NEXT_DATA_RE.search(html)
     if not m:
+        parsed = _parse_html_tracklist(html)
+        if parsed.get("tracks"):
+            return parsed
         return {"success": False, "error": "Unable to parse Spotify page"}
     try:
         data = json.loads(m.group(1))
     except Exception:
+        parsed = _parse_html_tracklist(html)
+        if parsed.get("tracks"):
+            return parsed
         return {"success": False, "error": "Unable to decode Spotify page data"}
 
     album_name = _find_album_name(data)
@@ -135,6 +188,10 @@ async def scrape_tracklist(url: str) -> dict:
     _collect_tracks(data, tracks, album_name)
     tracks = _dedupe_tracks(tracks)
     cover_url = _find_best_image(data)
+    if not tracks:
+        parsed = _parse_html_tracklist(html)
+        if parsed.get("tracks"):
+            return parsed
     return {"success": True, "title": album_name, "cover_url": cover_url, "tracks": tracks}
 
 async def _download_cover(cover_url: str) -> str | None:
@@ -202,4 +259,3 @@ async def download_spotify_fallback(url: str, max_tracks: int = 50) -> dict:
         "cover_path": cover_path,
         "tracks": tracks,
     }
-
