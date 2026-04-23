@@ -135,8 +135,49 @@ async def cb_admin_user(callback: CallbackQuery):
     for url, dl_type, downloaded_at, bytes_used, title in rows:
         label = (title or "").strip() or url
         lines.append(f"- {label} | {dl_type} | {format_bytes(int(bytes_used or 0))}\n{url}")
+    is_p = bool(await get_user_premium(user_id))
     await callback.answer()
-    await callback.message.edit_text("\n\n".join(lines), disable_web_page_preview=True, reply_markup=user_downloads_menu(lang, user_id, page, has_next))
+    await callback.message.edit_text(
+        "\n\n".join(lines),
+        disable_web_page_preview=True,
+        reply_markup=user_downloads_menu(lang, user_id, page, has_next, is_premium=is_p),
+    )
+
+@router.callback_query(F.data.startswith("admin_premium:"))
+async def cb_admin_premium(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+    parts = (callback.data or "").split(":")
+    if len(parts) != 3:
+        await callback.answer()
+        return
+    try:
+        user_id = int(parts[1])
+        page = int(parts[2])
+    except ValueError:
+        await callback.answer()
+        return
+    await ensure_user(user_id)
+    is_p = bool(await get_user_premium(user_id))
+    await set_user_premium(user_id, not is_p)
+    lang = await get_user_language(callback.from_user.id)
+    rows = await get_user_downloads(user_id, limit=11, offset=max(0, page) * 10)
+    has_next = len(rows) > 10
+    rows = rows[:10]
+    lines = [get_text(lang, "admin_user_downloads_title", user=str(user_id))]
+    if not rows:
+        lines.append("—")
+    for url, dl_type, downloaded_at, bytes_used, title in rows:
+        label = (title or "").strip() or url
+        lines.append(f"- {label} | {dl_type} | {format_bytes(int(bytes_used or 0))}\n{url}")
+    await callback.answer(get_text(lang, "admin_premium_updated"))
+    is_p2 = bool(await get_user_premium(user_id))
+    await callback.message.edit_text(
+        "\n\n".join(lines),
+        disable_web_page_preview=True,
+        reply_markup=user_downloads_menu(lang, user_id, page, has_next, is_premium=is_p2),
+    )
 
 @router.message(Command("setpremium"))
 async def cmd_setpremium(message: Message):

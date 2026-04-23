@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     bot_token: str
+    admin_bot_token: Optional[str] = None
     admin_ids: List[int] = []
     premium_ids: List[int] = []
     db_path: str = "data/bot.db"
@@ -42,6 +43,8 @@ class Settings(BaseSettings):
     telegram_delivery_mode: str = "chunk"
     download_retention_hours: int = 12
     cleanup_interval_seconds: int = 3600
+    adult_autodelete_enabled: bool = True
+    adult_autodelete_seconds: int = 15
 
     def model_post_init(self, __context) -> None:
         if self.telegram_is_local_api:

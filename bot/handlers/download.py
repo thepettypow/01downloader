@@ -38,6 +38,21 @@ logger = logging.getLogger(__name__)
 
 URL_REGEX = re.compile(r'https?://[^\s]+')
 
+async def _auto_delete_message(msg: Message, delay_s: int) -> None:
+    await asyncio.sleep(max(0, int(delay_s)))
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+
+def _schedule_auto_delete(msg: Message | None, delay_s: int | None) -> None:
+    if not msg or not delay_s:
+        return
+    try:
+        asyncio.create_task(_auto_delete_message(msg, int(delay_s)))
+    except Exception:
+        pass
+
 async def _check_quota(user_id: int, lang: str, bytes_needed: int) -> tuple[bool, str]:
     ok, used, limit = await can_consume(user_id, bytes_needed)
     if ok:
@@ -60,6 +75,19 @@ def _is_instagram_url(u: str) -> bool:
         host = ""
     return "instagram.com" in host or "instagr.am" in host
 
+def _is_adult_site(u: str) -> bool:
+    try:
+        host = (urlparse(u).netloc or "").lower()
+    except Exception:
+        host = ""
+    return any(
+        h in host
+        for h in (
+            "pornhub.com",
+            "xvideos.com",
+        )
+    )
+
 def _is_long_video_site(u: str) -> bool:
     try:
         host = (urlparse(u).netloc or "").lower()
@@ -71,7 +99,10 @@ def _is_long_video_site(u: str) -> bool:
             "youtube.com",
             "youtu.be",
             "pornhub.com",
+            "xvideos.com",
             "vk.com",
+            "facebook.com",
+            "fb.watch",
         )
     )
 
@@ -99,7 +130,13 @@ def _with_credit(caption: str | None, lang: str, max_len: int = 1024) -> str | N
     trimmed = base[: max(0, room)].rstrip()
     return f"{trimmed}\n\n{suffix}".strip()
 
-async def _send_quick_files(message: Message, lang: str, caption_top: str | None, result: dict):
+async def _send_quick_files(
+    message: Message,
+    lang: str,
+    caption_top: str | None,
+    result: dict,
+    auto_delete_seconds: int | None = None,
+):
     files = list(result.get("file_paths") or [])
     caption = _with_credit(caption_top, lang)
 
@@ -108,7 +145,8 @@ async def _send_quick_files(message: Message, lang: str, caption_top: str | None
     for fp in files:
         ext = os.path.splitext(fp)[1].lower()
         if ext in (".jpg", ".jpeg", ".png", ".webp"):
-            await message.answer_photo(FSInputFile(fp), caption=caption_left)
+            sent = await message.answer_photo(FSInputFile(fp), caption=caption_left)
+            _schedule_auto_delete(sent, auto_delete_seconds)
             caption_left = None
             continue
         if ext in (".mp4", ".m4v", ".mov"):
@@ -166,7 +204,8 @@ async def _send_quick_files(message: Message, lang: str, caption_top: str | None
                     kwargs["height"] = int(meta["height"])
                 if thumb_path and os.path.exists(thumb_path):
                     kwargs["thumbnail"] = FSInputFile(thumb_path)
-                await message.answer_video(FSInputFile(fp), caption=caption_left, **kwargs)
+                sent = await message.answer_video(FSInputFile(fp), caption=caption_left, **kwargs)
+                _schedule_auto_delete(sent, auto_delete_seconds)
                 caption_left = None
             finally:
                 if thumb_path and os.path.exists(thumb_path):
@@ -175,10 +214,11 @@ async def _send_quick_files(message: Message, lang: str, caption_top: str | None
                     except Exception:
                         pass
             continue
-        await message.answer_document(FSInputFile(fp), caption=caption_left)
+        sent = await message.answer_document(FSInputFile(fp), caption=caption_left)
+        _schedule_auto_delete(sent, auto_delete_seconds)
         caption_left = None
 
-async def _handle_x_message(message: Message, user_id: int, lang: str, url: str):
+async def _handle_x_message(message: Message, user_id: int, lang: str, url: str, auto_delete_seconds: int | None):
     if not await check_rate_limit(user_id, config.daily_limit):
         await message.answer(get_text(lang, 'rate_limit', limit=config.daily_limit))
         return
@@ -208,7 +248,10 @@ async def _handle_x_message(message: Message, user_id: int, lang: str, url: str)
         except Exception:
             pass
         try:
-            await _send_quick_files(message, lang, result.get("caption"), result)
+            if auto_delete_seconds:
+                notice = await message.answer(get_text(lang, "adult_autodelete_notice", seconds=str(int(auto_delete_seconds))))
+                _schedule_auto_delete(notice, auto_delete_seconds)
+            await _send_quick_files(message, lang, result.get("caption"), result, auto_delete_seconds=auto_delete_seconds)
             await consume_bytes(user_id, total_bytes)
             await log_download(user_id, url, "video", bytes_used=total_bytes, title=(result.get("caption") or ""))
         except Exception as e:
@@ -219,7 +262,7 @@ async def _handle_x_message(message: Message, user_id: int, lang: str, url: str)
             shutil.rmtree(dir_to_clean, ignore_errors=True)
         queue_manager.release()
 
-async def _handle_quick_message(message: Message, user_id: int, lang: str, url: str):
+async def _handle_quick_message(message: Message, user_id: int, lang: str, url: str, auto_delete_seconds: int | None):
     if not await check_rate_limit(user_id, config.daily_limit):
         await message.answer(get_text(lang, 'rate_limit', limit=config.daily_limit))
         return
@@ -249,7 +292,10 @@ async def _handle_quick_message(message: Message, user_id: int, lang: str, url: 
         except Exception:
             pass
         try:
-            await _send_quick_files(message, lang, result.get("caption"), result)
+            if auto_delete_seconds:
+                notice = await message.answer(get_text(lang, "adult_autodelete_notice", seconds=str(int(auto_delete_seconds))))
+                _schedule_auto_delete(notice, auto_delete_seconds)
+            await _send_quick_files(message, lang, result.get("caption"), result, auto_delete_seconds=auto_delete_seconds)
             await consume_bytes(user_id, total_bytes)
             await log_download(user_id, url, "video", bytes_used=total_bytes, title=(result.get("caption") or ""))
         except Exception as e:
@@ -484,11 +530,14 @@ async def process_url(message: Message):
         clean_url = _sanitize_url(url)
         if not clean_url:
             continue
+        auto_delete_seconds = None
+        if bool(getattr(config, "adult_autodelete_enabled", True)) and _is_adult_site(clean_url):
+            auto_delete_seconds = int(getattr(config, "adult_autodelete_seconds", 15))
         if _is_spotify_url(clean_url):
             await _handle_spotify_message(message, user_id, lang, clean_url)
             continue
         if _is_x_url(clean_url):
-            await _handle_x_message(message, user_id, lang, clean_url)
+            await _handle_x_message(message, user_id, lang, clean_url, auto_delete_seconds)
             continue
         if _is_instagram_url(clean_url):
             pending_id = await create_pending_download(user_id, clean_url)
@@ -498,7 +547,7 @@ async def process_url(message: Message):
             )
             continue
         if not _is_long_video_site(clean_url):
-            await _handle_quick_message(message, user_id, lang, clean_url)
+            await _handle_quick_message(message, user_id, lang, clean_url, auto_delete_seconds)
             continue
         pending_id = await create_pending_download(user_id, clean_url)
         kb = None
@@ -541,6 +590,9 @@ async def process_download_choice(callback: CallbackQuery):
         await callback.answer(get_text(lang, 'invalid_request'), show_alert=True)
         return
     url = _sanitize_url(url)
+    auto_delete_seconds = None
+    if bool(getattr(config, "adult_autodelete_enabled", True)) and _is_adult_site(url):
+        auto_delete_seconds = int(getattr(config, "adult_autodelete_seconds", 15))
 
     await delete_pending_download(pending_id)
 
@@ -562,6 +614,11 @@ async def process_download_choice(callback: CallbackQuery):
 
     await queue_manager.wait_and_acquire()
     try:
+        if auto_delete_seconds:
+            notice = await callback.message.answer(
+                get_text(lang, "adult_autodelete_notice", seconds=str(int(auto_delete_seconds)))
+            )
+            _schedule_auto_delete(notice, auto_delete_seconds)
         await callback.message.edit_text(get_text(lang, 'downloading'))
 
         max_height = None
@@ -873,9 +930,10 @@ async def process_download_choice(callback: CallbackQuery):
 
             last_err = None
             max_attempts = 3
+            sent_msg = None
             for attempt in range(max_attempts):
                 try:
-                    await send_once()
+                    sent_msg = await send_once()
                     last_err = None
                     break
                 except Exception as e:
@@ -925,6 +983,7 @@ async def process_download_choice(callback: CallbackQuery):
                     raise
             if last_err is not None:
                 raise last_err
+            _schedule_auto_delete(sent_msg, auto_delete_seconds)
 
             await consume_bytes(user_id, charge_bytes)
             await log_download(user_id, url, download_type, bytes_used=charge_bytes, title=title)

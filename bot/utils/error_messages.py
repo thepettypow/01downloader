@@ -8,6 +8,12 @@ def to_user_friendly_error(lang: str, err: str) -> str:
     if not s:
         return fa("😬 یه چیزی پرید. یه کم بعد دوباره بزن.", "😬 Something went sideways. Try again in a bit.")
 
+    if "facebook.com/login" in low or "facebook.com/login.php" in low:
+        return fa(
+            "😬 فیسبوک اجازه دانلود نمی‌ده (لاگین/کوکی لازم داره). اگه ویدیو پابلیکه، با cookies.txt تست کن.",
+            "😬 Facebook blocked access (login/cookies required). If it’s public, try again with a valid cookies.txt.",
+        )
+
     if "unsupported url" in low or "unsupported link" in low or "not supported" in low:
         return fa("😅 این لینک رو ساپورت نمی‌کنم.", "😅 I can’t handle this link.")
 
