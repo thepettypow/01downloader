@@ -4,8 +4,16 @@ from aiogram.types import Message, FSInputFile, CallbackQuery
 from aiogram.filters import Command, CommandStart
 from bot.config.settings import config
 from bot.models.analytics import get_total_users, get_total_downloads, get_recent_downloads, get_active_users
-from bot.models.database import list_users, get_user_downloads, set_user_premium, get_user_premium, ensure_user, get_user_language
-from bot.utils.keyboards import users_list_menu, user_downloads_menu, admin_reply_menu
+from bot.models.database import (
+    list_users,
+    get_user_downloads,
+    set_user_premium,
+    get_user_premium,
+    ensure_user,
+    get_user_language,
+    wipe_user_history,
+)
+from bot.utils.keyboards import users_list_menu, user_downloads_menu, user_downloads_wipe_confirm_menu, admin_reply_menu
 from bot.utils.locales import get_text
 from bot.utils.formatting import format_bytes
 
@@ -13,6 +21,21 @@ router = Router()
 
 def is_admin(user_id: int) -> bool:
     return user_id in config.admin_ids
+
+async def _render_user_downloads(lang: str, user_id: int, page: int) -> tuple[str, bool, bool]:
+    page_size = 10
+    offset = max(0, page) * page_size
+    rows = await get_user_downloads(user_id, limit=page_size + 1, offset=offset)
+    has_next = len(rows) > page_size
+    rows = rows[:page_size]
+    lines = [get_text(lang, "admin_user_downloads_title", user=str(user_id))]
+    if not rows:
+        lines.append("—")
+    for url, dl_type, downloaded_at, bytes_used, title in rows:
+        label = (title or "").strip() or url
+        lines.append(f"- {label} | {dl_type} | {format_bytes(int(bytes_used or 0))}\n{url}")
+    is_p = bool(await get_user_premium(user_id))
+    return "\n\n".join(lines), has_next, is_p
 
 @router.message(CommandStart())
 async def cmd_admin_start(message: Message):
@@ -151,23 +174,62 @@ async def cb_admin_user(callback: CallbackQuery):
         await callback.answer()
         return
     lang = await get_user_language(callback.from_user.id)
-    page_size = 10
-    offset = max(0, page) * page_size
-    rows = await get_user_downloads(user_id, limit=page_size + 1, offset=offset)
-    has_next = len(rows) > page_size
-    rows = rows[:page_size]
-    lines = [get_text(lang, "admin_user_downloads_title", user=str(user_id))]
-    if not rows:
-        lines.append("—")
-    for url, dl_type, downloaded_at, bytes_used, title in rows:
-        label = (title or "").strip() or url
-        lines.append(f"- {label} | {dl_type} | {format_bytes(int(bytes_used or 0))}\n{url}")
-    is_p = bool(await get_user_premium(user_id))
+    text, has_next, is_p = await _render_user_downloads(lang, user_id, page)
     await callback.answer()
     await callback.message.edit_text(
-        "\n\n".join(lines),
+        text,
         disable_web_page_preview=True,
         reply_markup=user_downloads_menu(lang, user_id, page, has_next, is_premium=is_p),
+    )
+
+@router.callback_query(F.data.startswith("admin_wipe:"))
+async def cb_admin_wipe(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+    parts = (callback.data or "").split(":")
+    if len(parts) != 3:
+        await callback.answer()
+        return
+    try:
+        user_id = int(parts[1])
+        page = int(parts[2])
+    except ValueError:
+        await callback.answer()
+        return
+    lang = await get_user_language(callback.from_user.id)
+    text, _, _ = await _render_user_downloads(lang, user_id, page)
+    await callback.answer()
+    await callback.message.edit_text(
+        f"{text}\n\n{get_text(lang, 'admin_wipe_confirm')}",
+        disable_web_page_preview=True,
+        reply_markup=user_downloads_wipe_confirm_menu(lang, user_id, page),
+    )
+
+@router.callback_query(F.data.startswith("admin_wipe_confirm:"))
+async def cb_admin_wipe_confirm(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+    parts = (callback.data or "").split(":")
+    if len(parts) != 3:
+        await callback.answer()
+        return
+    try:
+        user_id = int(parts[1])
+        page = int(parts[2])
+    except ValueError:
+        await callback.answer()
+        return
+    await ensure_user(user_id)
+    await wipe_user_history(user_id)
+    lang = await get_user_language(callback.from_user.id)
+    text, has_next, is_p = await _render_user_downloads(lang, user_id, 0)
+    await callback.answer(get_text(lang, "admin_wipe_done"))
+    await callback.message.edit_text(
+        text,
+        disable_web_page_preview=True,
+        reply_markup=user_downloads_menu(lang, user_id, 0, has_next, is_premium=is_p),
     )
 
 @router.callback_query(F.data.startswith("admin_premium:"))
@@ -189,19 +251,10 @@ async def cb_admin_premium(callback: CallbackQuery):
     is_p = bool(await get_user_premium(user_id))
     await set_user_premium(user_id, not is_p)
     lang = await get_user_language(callback.from_user.id)
-    rows = await get_user_downloads(user_id, limit=11, offset=max(0, page) * 10)
-    has_next = len(rows) > 10
-    rows = rows[:10]
-    lines = [get_text(lang, "admin_user_downloads_title", user=str(user_id))]
-    if not rows:
-        lines.append("—")
-    for url, dl_type, downloaded_at, bytes_used, title in rows:
-        label = (title or "").strip() or url
-        lines.append(f"- {label} | {dl_type} | {format_bytes(int(bytes_used or 0))}\n{url}")
     await callback.answer(get_text(lang, "admin_premium_updated"))
-    is_p2 = bool(await get_user_premium(user_id))
+    text, has_next, is_p2 = await _render_user_downloads(lang, user_id, page)
     await callback.message.edit_text(
-        "\n\n".join(lines),
+        text,
         disable_web_page_preview=True,
         reply_markup=user_downloads_menu(lang, user_id, page, has_next, is_premium=is_p2),
     )

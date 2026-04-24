@@ -121,8 +121,6 @@ def _is_long_video_site(u: str) -> bool:
             "pornhub.com",
             "xvideos.com",
             "vk.com",
-            "facebook.com",
-            "fb.watch",
         )
     )
 
@@ -584,13 +582,6 @@ async def process_url(message: Message):
             continue
         if _is_x_url(clean_url):
             await _handle_x_message(message, user_id, lang, clean_url, auto_delete_seconds)
-            continue
-        if _is_instagram_url(clean_url):
-            pending_id = await create_pending_download(user_id, clean_url)
-            await message.reply(
-                get_text(lang, 'choose_format'),
-                reply_markup=download_choice_menu(lang, pending_id),
-            )
             continue
         if not _is_long_video_site(clean_url):
             await _handle_quick_message(message, user_id, lang, clean_url, auto_delete_seconds)

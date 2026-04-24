@@ -293,3 +293,10 @@ async def delete_pending_download(pending_id: int):
     async with aiosqlite.connect(config.db_path) as db:
         await db.execute('DELETE FROM pending_downloads WHERE id = ?', (pending_id,))
         await db.commit()
+
+async def wipe_user_history(user_id: int) -> None:
+    async with aiosqlite.connect(config.db_path) as db:
+        await db.execute("DELETE FROM downloads WHERE user_id = ?", (int(user_id),))
+        await db.execute("DELETE FROM daily_usage WHERE user_id = ?", (int(user_id),))
+        await db.execute("DELETE FROM pending_downloads WHERE user_id = ?", (int(user_id),))
+        await db.commit()

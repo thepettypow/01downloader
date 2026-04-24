@@ -179,12 +179,27 @@ def user_downloads_menu(lang: str, user_id: int, page: int, has_next: bool, is_p
                 text=get_text(lang, "admin_btn_premium_on" if is_premium else "admin_btn_premium_off"),
                 callback_data=f"admin_premium:{user_id}:{page}",
             )
+            ,
+            InlineKeyboardButton(
+                text=get_text(lang, "admin_btn_wipe"),
+                callback_data=f"admin_wipe:{user_id}:{page}",
+            ),
         ]
     )
     prev_cb = f"admin_user:{user_id}:{page - 1}" if page > 0 else None
     next_cb = f"admin_user:{user_id}:{page + 1}" if has_next else None
     nav = pager_menu(lang, prev_cb, next_cb, back_cb=f"admin_users:{0}")
     rows.extend(nav.inline_keyboard)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+def user_downloads_wipe_confirm_menu(lang: str, user_id: int, page: int):
+    from bot.utils.locales import get_text
+    rows = [
+        [
+            InlineKeyboardButton(text=get_text(lang, "admin_wipe_yes"), callback_data=f"admin_wipe_confirm:{user_id}:{page}"),
+            InlineKeyboardButton(text=get_text(lang, "admin_wipe_no"), callback_data=f"admin_user:{user_id}:{page}"),
+        ]
+    ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 def admin_reply_menu(lang: str = "en"):
