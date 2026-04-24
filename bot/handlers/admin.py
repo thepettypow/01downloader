@@ -80,10 +80,9 @@ async def cmd_admin_logs(message: Message):
     logs_text = f"{get_text(lang, 'admin_logs_title')}\n\n"
     for user_id, username, url, dl_type, time in recent:
         user_display = f"@{username}" if username else f"ID:{user_id}"
-        domain = url.split('/')[2] if '//' in url else url[:15]
-        logs_text += f"👤 {user_display} | 📥 {dl_type}\n🔗 `{domain}`\n🕒 {time}\n\n"
+        logs_text += f"👤 {user_display} | 📥 {dl_type}\n🔗 {url}\n🕒 {time}\n\n"
         
-    await message.answer(logs_text, parse_mode="Markdown", disable_web_page_preview=True)
+    await message.answer(logs_text, disable_web_page_preview=True)
 
 @router.message(Command("db"))
 async def cmd_admin_db(message: Message):
