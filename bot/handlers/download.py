@@ -29,6 +29,7 @@ from bot.downloaders.spotdl_wrapper import download_spotify
 from bot.downloaders.spotify_fallback import download_spotify_fallback, iter_spotify_fallback
 from bot.downloaders.quick_ytdlp import quick_download
 from bot.downloaders.http_fallback import download_direct_file
+from bot.downloaders.pinterest_fallback import download_pinterest_images
 from bot.utils.telegram_compress import compress_video_to_size, compress_audio_to_size
 from bot.utils.video_tools import probe_video, extract_thumbnail
 from bot.utils.audio_tools import probe_audio, extract_audio_cover
@@ -93,6 +94,13 @@ def _is_instagram_url(u: str) -> bool:
     except Exception:
         host = ""
     return "instagram.com" in host or "instagr.am" in host
+
+def _is_pinterest_url(u: str) -> bool:
+    try:
+        host = (urlparse(u).netloc or "").lower()
+    except Exception:
+        host = ""
+    return "pinterest." in host or host.endswith("pin.it")
 
 def _is_adult_site(u: str) -> bool:
     s = (u or "").lower()
@@ -293,11 +301,21 @@ async def _handle_quick_message(message: Message, user_id: int, lang: str, url: 
         await status_msg.edit_text(get_text(lang, 'downloading'))
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, quick_download, url)
+        if not result.get("success") and _is_pinterest_url(url):
+            err = str(result.get("error") or "")
+            if "no video formats found" in err.lower():
+                result = await download_pinterest_images(url)
         if not result.get("success"):
             await status_msg.edit_text(get_text(lang, 'error', error=to_user_friendly_error(lang, result.get("error", ""))))
             return
+        file_paths = list(result.get("file_paths") or [])
+        dl_type = "video"
+        if file_paths:
+            exts = {os.path.splitext(p)[1].lower() for p in file_paths}
+            if exts.issubset({".jpg", ".jpeg", ".png", ".webp"}):
+                dl_type = "photo"
         total_bytes = 0
-        for fp in list(result.get("file_paths") or []):
+        for fp in file_paths:
             try:
                 total_bytes += int(os.path.getsize(fp))
             except Exception:
@@ -313,7 +331,7 @@ async def _handle_quick_message(message: Message, user_id: int, lang: str, url: 
         try:
             await _send_quick_files(message, lang, result.get("caption"), result, auto_delete_seconds=auto_delete_seconds)
             await consume_bytes(user_id, total_bytes)
-            await log_download(user_id, url, "video", bytes_used=total_bytes, title=(result.get("caption") or ""))
+            await log_download(user_id, url, dl_type, bytes_used=total_bytes, title=(result.get("caption") or ""))
             if auto_delete_seconds:
                 notice = await message.answer(get_text(lang, "adult_autodelete_notice", seconds=str(int(auto_delete_seconds))))
                 _schedule_auto_delete(notice, int(auto_delete_seconds) + 1)
