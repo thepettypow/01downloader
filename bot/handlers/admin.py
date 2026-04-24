@@ -1,11 +1,11 @@
 import os
 from aiogram import Router, F
 from aiogram.types import Message, FSInputFile, CallbackQuery
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandStart
 from bot.config.settings import config
 from bot.models.analytics import get_total_users, get_total_downloads, get_recent_downloads, get_active_users
 from bot.models.database import list_users, get_user_downloads, set_user_premium, get_user_premium, ensure_user, get_user_language
-from bot.utils.keyboards import users_list_menu, user_downloads_menu
+from bot.utils.keyboards import users_list_menu, user_downloads_menu, admin_reply_menu
 from bot.utils.locales import get_text
 from bot.utils.formatting import format_bytes
 
@@ -13,6 +13,13 @@ router = Router()
 
 def is_admin(user_id: int) -> bool:
     return user_id in config.admin_ids
+
+@router.message(CommandStart())
+async def cmd_admin_start(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    lang = await get_user_language(message.from_user.id)
+    await message.answer(get_text(lang, "admin_panel_title"), reply_markup=admin_reply_menu(lang))
 
 @router.message(Command("admin"))
 async def cmd_admin_panel(message: Message):
@@ -37,6 +44,27 @@ async def cmd_admin_panel(message: Message):
     )
     
     await message.answer(stats_text, parse_mode="Markdown")
+
+@router.message()
+async def admin_text_shortcuts(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    text = (message.text or "").strip()
+    if not text:
+        return
+    lang = await get_user_language(message.from_user.id)
+    if text == get_text(lang, "admin_kb_panel"):
+        await cmd_admin_panel(message)
+        return
+    if text == get_text(lang, "admin_kb_users"):
+        await cmd_admin_users(message)
+        return
+    if text == get_text(lang, "admin_kb_logs"):
+        await cmd_admin_logs(message)
+        return
+    if text == get_text(lang, "admin_kb_db"):
+        await cmd_admin_db(message)
+        return
 
 @router.message(Command("logs"))
 async def cmd_admin_logs(message: Message):

@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 
 def _fmt_mb(size_bytes: int) -> str:
     try:
@@ -186,3 +186,19 @@ def user_downloads_menu(lang: str, user_id: int, page: int, has_next: bool, is_p
     nav = pager_menu(lang, prev_cb, next_cb, back_cb=f"admin_users:{0}")
     rows.extend(nav.inline_keyboard)
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+def admin_reply_menu(lang: str = "en"):
+    from bot.utils.locales import get_text
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text=get_text(lang, "admin_kb_panel")),
+                KeyboardButton(text=get_text(lang, "admin_kb_users")),
+            ],
+            [
+                KeyboardButton(text=get_text(lang, "admin_kb_logs")),
+                KeyboardButton(text=get_text(lang, "admin_kb_db")),
+            ],
+        ],
+        resize_keyboard=True,
+    )
