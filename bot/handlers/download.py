@@ -301,10 +301,12 @@ async def _handle_quick_message(message: Message, user_id: int, lang: str, url: 
         await status_msg.edit_text(get_text(lang, 'downloading'))
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, quick_download, url)
-        if not result.get("success") and _is_pinterest_url(url):
-            err = str(result.get("error") or "")
-            if "no video formats found" in err.lower():
-                result = await download_pinterest_images(url)
+        if _is_pinterest_url(url):
+            has_files = bool(list(result.get("file_paths") or []))
+            if not result.get("success") or not has_files:
+                result2 = await download_pinterest_images(url)
+                if result2.get("success"):
+                    result = result2
         if not result.get("success"):
             await status_msg.edit_text(get_text(lang, 'error', error=to_user_friendly_error(lang, result.get("error", ""))))
             return

@@ -14,6 +14,12 @@ def to_user_friendly_error(lang: str, err: str) -> str:
             "😬 Facebook blocked access (login/cookies required). If it’s public, try again with a valid cookies.txt.",
         )
 
+    if "pinterest oembed" in low:
+        return fa(
+            "😬 پینترست اجازه نداد عکس رو بگیرم (احتمالاً بلاک/403). یه بار دیگه تست کن یا با VPN/پروکسی سرور تست کن.",
+            "😬 Pinterest blocked the image fetch (often 403/blocked). Try again or test from a different IP.",
+        )
+
     if "unsupported url" in low or "unsupported link" in low or "not supported" in low:
         return fa("😅 این لینک رو ساپورت نمی‌کنم.", "😅 I can’t handle this link.")
 
