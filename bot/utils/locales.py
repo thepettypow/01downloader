@@ -1,6 +1,7 @@
 LOCALES = {
     'en': {
         'welcome': "Yo {user_id} 👋\n\nYou’re on the free vibe 😄\n\nJust drop a link here and I’ll grab the video/audio/photos for you. Easy.",
+        'welcome_premium': "Yo {user_id} 👋\n\nYou’re premium now 💳\n\nJust drop a link here and I’ll grab the video/audio/photos for you. Easy.",
         'help': "ℹ️ What I can handle: YouTube, Instagram, TikTok, Twitter/X, Spotify, SoundCloud, Pornhub, XVideos, VK, Vimeo + direct MP3/MP4.\n\nSend a link and let’s go.",
         'choose_language': "Pick your vibe:",
         'choose_format': "What do you want?",
@@ -14,6 +15,7 @@ LOCALES = {
         'stats': "📊 Your downloads so far: {count}",
         'quota_status': "📦 Today’s quota: {used} / {limit}",
         'quota_exceeded': "😬 You’re out of quota for today.\n\nLeft: {remaining}",
+        'quota_after_download': "📦 Today: {used} / {limit} (left: {remaining})",
         'files_title': "🗄 Your latest downloads:",
         'contact_text': "📬 Support/Channel:\n{channel}",
         'rules_text': "📜 Quick rules:\n- Daily quota: {quota}\n- If the file is huge, pick lower quality\n- Some sites randomly block stuff (not my fault 😅)",
@@ -77,6 +79,7 @@ LOCALES = {
     },
     'fa': {
         'welcome': "سلام {user_id} 👋\n\nفعلاً رو حالت فری هستی 😄\n\nلینک رو بنداز اینجا، من برات ویدیو/صدا/عکس رو می‌گیرم. بزن بریم.",
+        'welcome_premium': "سلام {user_id} 👋\n\nالان پرمیومی 💳\n\nلینک رو بنداز اینجا، من برات ویدیو/صدا/عکس رو می‌گیرم. بزن بریم.",
         'help': "ℹ️ اینا رو ساپورت می‌کنم: YouTube, Instagram, TikTok, Twitter/X, Spotify, SoundCloud, Pornhub, XVideos, VK, Vimeo + لینک مستقیم MP3/MP4.\n\nفقط لینک بده.",
         'choose_language': "کدوم زبان حال می‌کنی؟",
         'choose_format': "چی می‌خوای بفرستم؟",
@@ -90,6 +93,7 @@ LOCALES = {
         'stats': "📊 دانلودات تا الان: {count}",
         'quota_status': "📦 حجم امروز: {used} / {limit}",
         'quota_exceeded': "😬 حجم امروزت ته کشید.\n\nباقی‌مونده: {remaining}",
+        'quota_after_download': "📦 امروز: {used} / {limit} (باقی‌مونده: {remaining})",
         'files_title': "🗄 آخرین دانلودات:",
         'contact_text': "📬 پشتیبانی/کانال:\n{channel}",
         'rules_text': "📜 قوانین خیلی کوتاه:\n- سهمیه روزانه: {quota}\n- اگه فایل گنده‌ست، کیفیت پایین‌تر بزن\n- بعضی سایت‌ها یهویی گیر می‌دن (به من فحش نده 😅)",

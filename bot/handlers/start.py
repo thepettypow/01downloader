@@ -7,6 +7,7 @@ from bot.models.database import (
     get_user_language,
     set_user_mode,
     get_user,
+    get_user_premium,
     is_language_selected,
     apply_referral_if_new_user,
     get_referral_bonus_gb,
@@ -45,6 +46,15 @@ def _domain(url: str) -> str:
         pass
     return (url or "")[:32]
 
+async def _is_premium_user(user_id: int) -> bool:
+    if int(user_id) in [int(x) for x in (getattr(config, "premium_ids", []) or [])]:
+        return True
+    return bool(await get_user_premium(user_id))
+
+async def _welcome_text(lang: str, user_id: int) -> str:
+    key = "welcome_premium" if await _is_premium_user(user_id) else "welcome"
+    return get_text(lang, key, user_id=user_id)
+
 @router.message(CommandStart())
 async def cmd_start(message: Message):
     user_id = message.from_user.id
@@ -61,7 +71,7 @@ async def cmd_start(message: Message):
         return
 
     lang = await get_user_language(user_id)
-    await message.answer(get_text(lang, 'welcome', user_id=user_id), reply_markup=main_menu_inline(lang))
+    await message.answer(await _welcome_text(lang, user_id), reply_markup=main_menu_inline(lang))
 
 @router.callback_query(F.data.startswith('lang_'))
 async def process_language(callback: CallbackQuery):
@@ -71,7 +81,7 @@ async def process_language(callback: CallbackQuery):
     
     await callback.answer(get_text(lang, 'language_set'), show_alert=True)
     await callback.message.edit_text(
-        get_text(lang, 'welcome', user_id=user_id),
+        await _welcome_text(lang, user_id),
         reply_markup=main_menu_inline(lang)
     )
 
@@ -127,7 +137,7 @@ async def process_menu_callbacks(callback: CallbackQuery):
         await callback.message.edit_text(get_text(lang, "news_text", news=news), reply_markup=_back_kb(lang))
     elif action == 'back':
         await callback.message.edit_text(
-            get_text(lang, 'welcome', user_id=user_id),
+            await _welcome_text(lang, user_id),
             reply_markup=main_menu_inline(lang)
         )
     else:

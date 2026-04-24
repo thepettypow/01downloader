@@ -15,6 +15,8 @@ from bot.models.database import (
     create_pending_download,
     get_pending_download,
     delete_pending_download,
+    get_user_used_bytes_today,
+    get_user_daily_quota_bytes,
     can_consume,
     consume_bytes,
 )
@@ -59,6 +61,23 @@ async def _check_quota(user_id: int, lang: str, bytes_needed: int) -> tuple[bool
         return True, ""
     remaining = max(0, int(limit) - int(used))
     return False, get_text(lang, "quota_exceeded", remaining=format_bytes(remaining))
+
+async def _send_quota_after_download(message: Message, user_id: int, lang: str) -> None:
+    try:
+        used = await get_user_used_bytes_today(user_id)
+        limit = await get_user_daily_quota_bytes(user_id)
+        remaining = max(0, int(limit) - int(used))
+        await message.answer(
+            get_text(
+                lang,
+                "quota_after_download",
+                used=format_bytes(used),
+                limit=format_bytes(limit),
+                remaining=format_bytes(remaining),
+            )
+        )
+    except Exception:
+        pass
 
 def _is_spotify_url(u: str) -> bool:
     s = (u or "").lower()
@@ -254,6 +273,7 @@ async def _handle_x_message(message: Message, user_id: int, lang: str, url: str,
             await _send_quick_files(message, lang, result.get("caption"), result, auto_delete_seconds=auto_delete_seconds)
             await consume_bytes(user_id, total_bytes)
             await log_download(user_id, url, "video", bytes_used=total_bytes, title=(result.get("caption") or ""))
+            await _send_quota_after_download(message, user_id, lang)
         except Exception as e:
             await message.answer(get_text(lang, "error", error=to_user_friendly_error(lang, str(e))))
     finally:
@@ -298,6 +318,7 @@ async def _handle_quick_message(message: Message, user_id: int, lang: str, url: 
             await _send_quick_files(message, lang, result.get("caption"), result, auto_delete_seconds=auto_delete_seconds)
             await consume_bytes(user_id, total_bytes)
             await log_download(user_id, url, "video", bytes_used=total_bytes, title=(result.get("caption") or ""))
+            await _send_quota_after_download(message, user_id, lang)
         except Exception as e:
             await message.answer(get_text(lang, "error", error=to_user_friendly_error(lang, str(e))))
     finally:
@@ -360,6 +381,7 @@ async def _send_spotify_result(message: Message, lang: str, user_id: int, url: s
 
         await consume_bytes(user_id, total_bytes)
         await log_download(user_id, url, "audio", bytes_used=total_bytes, title=title)
+        await _send_quota_after_download(message, user_id, lang)
     finally:
         if cover_path and os.path.exists(cover_path):
             try:
@@ -492,6 +514,7 @@ async def _handle_spotify_message(message: Message, user_id: int, lang: str, url
                     await notify_error("No matches found on YouTube")
                     return
                 await log_download(user_id, url, "audio", bytes_used=consumed_total, title=title)
+                await _send_quota_after_download(message, user_id, lang)
                 return
             finally:
                 if cover_path and os.path.exists(cover_path):
@@ -1010,6 +1033,7 @@ async def process_download_choice(callback: CallbackQuery):
 
             await consume_bytes(user_id, charge_bytes)
             await log_download(user_id, url, download_type, bytes_used=charge_bytes, title=title)
+            await _send_quota_after_download(callback.message, user_id, lang)
             try:
                 await callback.message.delete()
             except Exception:
