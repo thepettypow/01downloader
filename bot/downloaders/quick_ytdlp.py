@@ -4,7 +4,14 @@ import uuid
 import yt_dlp
 
 from bot.config.settings import config
-from bot.downloaders.ytdlp_wrapper import _merge_extractor_args, _cookiefile_has_youtube_cookies
+from bot.downloaders.ytdlp_wrapper import (
+    _merge_extractor_args,
+    _cookiefile_has_youtube_cookies,
+    _apply_youtube_hardening,
+    _cookiefile_candidates_rotated,
+    _proxy_candidates_for_url,
+    _is_youtube_login_block,
+)
 
 def _list_media_files(dir_path: str) -> list[str]:
     files = []
@@ -41,17 +48,9 @@ def quick_download(url: str) -> dict:
     if getattr(config, "ytdlp_force_ipv4", False):
         ydl_opts["source_address"] = "0.0.0.0"
 
-    cookie_file = (config.ytdlp_cookie_file or "").strip()
-    cookie_candidates = []
-    if cookie_file:
-        cookie_candidates.append(cookie_file)
-        cookie_candidates.append(os.path.join("/app/data", os.path.basename(cookie_file)))
-    cookie_candidates.append("/app/data/cookies.txt")
-    cookie_candidates.append("data/cookies.txt")
-    for candidate in cookie_candidates:
-        if candidate and os.path.exists(candidate):
-            ydl_opts["cookiefile"] = candidate
-            break
+    proxies = _proxy_candidates_for_url(url)
+    if proxies:
+        ydl_opts["proxy"] = proxies[0]
 
     cookies_from_browser = (getattr(config, "ytdlp_cookies_from_browser", "") or "").strip()
     if cookies_from_browser:
@@ -60,12 +59,10 @@ def quick_download(url: str) -> dict:
         profile = parts[1] if len(parts) > 1 and parts[1] else None
         ydl_opts["cookiesfrombrowser"] = (browser, profile) if profile else (browser,)
 
-    proxy = (config.ytdlp_proxy or "").strip()
-    if proxy:
-        ydl_opts["proxy"] = proxy
     user_agent = (config.ytdlp_user_agent or "").strip()
     if user_agent:
         ydl_opts["user_agent"] = user_agent
+    _apply_youtube_hardening(ydl_opts, url)
 
     if "pornhub.com" in (url or ""):
         ydl_opts["geo_bypass"] = True
@@ -78,14 +75,49 @@ def quick_download(url: str) -> dict:
             headers.setdefault("User-Agent", user_agent)
         ydl_opts["http_headers"] = headers
 
+    def run_once(opts: dict):
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(url, download=True)
+
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+        info = run_once(ydl_opts)
         files = _list_media_files(unique_dir)
         caption = (info.get("description") or info.get("title") or "").strip()
         return {"success": True, "file_paths": files, "caption": caption, "dir_to_clean": unique_dir}
     except Exception as e:
         msg = str(e)
+        if _is_youtube_login_block(msg):
+            cookiefiles = _cookiefile_candidates_rotated()
+            max_tries = int(getattr(config, "ytdlp_youtube_login_retries", 3) or 0)
+            max_tries = max(1, max_tries)
+            tried = 0
+            last_e = e
+            for proxy in (proxies or [None]):
+                for cookiefile in (cookiefiles or [None]):
+                    tried += 1
+                    opts = copy.deepcopy(ydl_opts)
+                    if proxy:
+                        opts["proxy"] = proxy
+                    else:
+                        opts.pop("proxy", None)
+                    if cookiefile:
+                        opts["cookiefile"] = cookiefile
+                    else:
+                        opts.pop("cookiefile", None)
+                    try:
+                        info = run_once(opts)
+                        files = _list_media_files(unique_dir)
+                        caption = (info.get("description") or info.get("title") or "").strip()
+                        return {"success": True, "file_paths": files, "caption": caption, "dir_to_clean": unique_dir}
+                    except Exception as e2:
+                        last_e = e2
+                        if not _is_youtube_login_block(str(e2)):
+                            break
+                    if tried >= max_tries and max_tries > 0:
+                        break
+                if tried >= max_tries and max_tries > 0:
+                    break
+            msg = str(last_e)
         m = msg.lower()
         if "sign in to confirm you’re not a bot" in m or "sign in to confirm you're not a bot" in m:
             cookiefile = (ydl_opts or {}).get("cookiefile")

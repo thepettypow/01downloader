@@ -16,8 +16,12 @@ class Settings(BaseSettings):
     support_channel: str = "https://t.me/sefroyeki"
     quota_timezone: str = "Asia/Tehran"
     ytdlp_cookie_file: Optional[str] = None
+    ytdlp_cookie_dir: Optional[str] = None
     ytdlp_cookies_from_browser: Optional[str] = None
     ytdlp_proxy: Optional[str] = None
+    ytdlp_proxy_list: Optional[str] = None
+    ytdlp_youtube_proxy: Optional[str] = None
+    ytdlp_youtube_proxy_list: Optional[str] = None
     ytdlp_user_agent: Optional[str] = None
     ytdlp_remote_components: str = "ejs:github"
     ytdlp_force_ipv4: bool = False
@@ -26,6 +30,9 @@ class Settings(BaseSettings):
     ytdlp_skip_youtubetab_authcheck: bool = True
     ytdlp_playlist_end: int = 1
     ytdlp_overall_timeout: int = 1800
+    ytdlp_youtube_login_retries: int = 3
+    ytdlp_youtube_pot_base_url: Optional[str] = None
+    ytdlp_youtube_player_clients: str = "mweb,web_safari,android,ios,web"
     spotdl_timeout: int = 900
     spotdl_client_id: Optional[str] = None
     spotdl_client_secret: Optional[str] = None

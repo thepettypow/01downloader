@@ -1,4 +1,15 @@
 services:
+  youtubepot-bgutil:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    restart: always
+    expose:
+      - "4416"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4416').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
   telegram-bot-api:
     image: aiogram/telegram-bot-api:latest
     restart: always
@@ -16,6 +27,7 @@ services:
     build: .
     restart: always
     depends_on:
+      - youtubepot-bgutil
       - telegram-bot-api
     volumes:
       - ./data:/app/data
@@ -24,6 +36,7 @@ services:
       - BOT_TOKEN=${BOT_TOKEN}
       - ADMIN_IDS=${ADMIN_IDS}
       - DB_PATH=/app/data/bot.db
+      - MAX_CONCURRENT_DOWNLOADS=${MAX_CONCURRENT_DOWNLOADS}
       - TELEGRAM_API_BASE=http://telegram-bot-api:8081
       - TELEGRAM_IS_LOCAL_API=1
       - TELEGRAM_REQUEST_TIMEOUT=7200
@@ -32,8 +45,12 @@ services:
       - TELEGRAM_FALLBACK_UPLOAD_BYTES=1887436800
       - TELEGRAM_HARD_LIMIT_BYTES=2097152000
       - YTDLP_COOKIE_FILE=${YTDLP_COOKIE_FILE}
+      - YTDLP_COOKIE_DIR=${YTDLP_COOKIE_DIR}
       - YTDLP_COOKIES_FROM_BROWSER=${YTDLP_COOKIES_FROM_BROWSER}
       - YTDLP_PROXY=${YTDLP_PROXY}
+      - YTDLP_PROXY_LIST=${YTDLP_PROXY_LIST}
+      - YTDLP_YOUTUBE_PROXY=${YTDLP_YOUTUBE_PROXY}
+      - YTDLP_YOUTUBE_PROXY_LIST=${YTDLP_YOUTUBE_PROXY_LIST}
       - YTDLP_USER_AGENT=${YTDLP_USER_AGENT}
       - YTDLP_REMOTE_COMPONENTS=${YTDLP_REMOTE_COMPONENTS}
       - YTDLP_FORCE_IPV4=${YTDLP_FORCE_IPV4}
@@ -42,6 +59,9 @@ services:
       - YTDLP_SKIP_YOUTUBETAB_AUTHCHECK=${YTDLP_SKIP_YOUTUBETAB_AUTHCHECK}
       - YTDLP_PLAYLIST_END=${YTDLP_PLAYLIST_END}
       - YTDLP_OVERALL_TIMEOUT=${YTDLP_OVERALL_TIMEOUT}
+      - YTDLP_YOUTUBE_LOGIN_RETRIES=${YTDLP_YOUTUBE_LOGIN_RETRIES}
+      - YTDLP_YOUTUBE_POT_BASE_URL=${YTDLP_YOUTUBE_POT_BASE_URL:-http://youtubepot-bgutil:4416}
+      - YTDLP_YOUTUBE_PLAYER_CLIENTS=${YTDLP_YOUTUBE_PLAYER_CLIENTS:-mweb,web_safari,android,ios,web}
       - SPOTDL_TIMEOUT=${SPOTDL_TIMEOUT}
       - SPOTDL_CLIENT_ID=${SPOTDL_CLIENT_ID}
       - SPOTDL_CLIENT_SECRET=${SPOTDL_CLIENT_SECRET}
@@ -56,6 +76,7 @@ services:
     build: .
     restart: always
     depends_on:
+      - youtubepot-bgutil
       - telegram-bot-api
     volumes:
       - ./data:/app/data
@@ -66,6 +87,7 @@ services:
       - ADMIN_BOT_TOKEN=${ADMIN_BOT_TOKEN}
       - ADMIN_IDS=${ADMIN_IDS}
       - DB_PATH=/app/data/bot.db
+      - MAX_CONCURRENT_DOWNLOADS=${MAX_CONCURRENT_DOWNLOADS}
       - TELEGRAM_API_BASE=http://telegram-bot-api:8081
       - TELEGRAM_IS_LOCAL_API=1
       - TELEGRAM_REQUEST_TIMEOUT=7200
@@ -74,8 +96,12 @@ services:
       - TELEGRAM_FALLBACK_UPLOAD_BYTES=1887436800
       - TELEGRAM_HARD_LIMIT_BYTES=2097152000
       - YTDLP_COOKIE_FILE=${YTDLP_COOKIE_FILE}
+      - YTDLP_COOKIE_DIR=${YTDLP_COOKIE_DIR}
       - YTDLP_COOKIES_FROM_BROWSER=${YTDLP_COOKIES_FROM_BROWSER}
       - YTDLP_PROXY=${YTDLP_PROXY}
+      - YTDLP_PROXY_LIST=${YTDLP_PROXY_LIST}
+      - YTDLP_YOUTUBE_PROXY=${YTDLP_YOUTUBE_PROXY}
+      - YTDLP_YOUTUBE_PROXY_LIST=${YTDLP_YOUTUBE_PROXY_LIST}
       - YTDLP_USER_AGENT=${YTDLP_USER_AGENT}
       - YTDLP_REMOTE_COMPONENTS=${YTDLP_REMOTE_COMPONENTS}
       - YTDLP_FORCE_IPV4=${YTDLP_FORCE_IPV4}
@@ -84,6 +110,9 @@ services:
       - YTDLP_SKIP_YOUTUBETAB_AUTHCHECK=${YTDLP_SKIP_YOUTUBETAB_AUTHCHECK}
       - YTDLP_PLAYLIST_END=${YTDLP_PLAYLIST_END}
       - YTDLP_OVERALL_TIMEOUT=${YTDLP_OVERALL_TIMEOUT}
+      - YTDLP_YOUTUBE_LOGIN_RETRIES=${YTDLP_YOUTUBE_LOGIN_RETRIES}
+      - YTDLP_YOUTUBE_POT_BASE_URL=${YTDLP_YOUTUBE_POT_BASE_URL:-http://youtubepot-bgutil:4416}
+      - YTDLP_YOUTUBE_PLAYER_CLIENTS=${YTDLP_YOUTUBE_PLAYER_CLIENTS:-mweb,web_safari,android,ios,web}
       - SPOTDL_TIMEOUT=${SPOTDL_TIMEOUT}
       - SPOTDL_CLIENT_ID=${SPOTDL_CLIENT_ID}
       - SPOTDL_CLIENT_SECRET=${SPOTDL_CLIENT_SECRET}

@@ -1,0 +1,9 @@
+- [x] PO Token provider approach selected and documented (provider + deployment mode)
+- [ ] docker-compose runs provider reliably and bot can reach it locally
+- [ ] yt-dlp calls successfully load PO token provider (verified via verbose log “PO Token Providers: …”)
+- [x] YouTube probe (format listing) uses the same auth strategy as download
+- [x] Cookie pool rotation works and does not leak cookie paths or contents in user-visible errors
+- [x] OAuth device-code mode is not implemented and cookie-based workflow is documented as required
+- [x] Error messages distinguish: bot-check vs missing provider vs missing cookies
+- [x] No secrets are logged (cookies, oauth tokens, proxy creds)
+- [ ] Manual smoke test from server environment succeeds for a representative public YouTube URL

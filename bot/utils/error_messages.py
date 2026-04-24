@@ -17,6 +17,18 @@ def to_user_friendly_error(lang: str, err: str) -> str:
     if "unsupported url" in low or "unsupported link" in low or "not supported" in low:
         return fa("😅 این لینک رو ساپورت نمی‌کنم.", "😅 I can’t handle this link.")
 
+    if "po token" in low or "po_token" in low or "youtubepot" in low or "bgutil" in low:
+        return fa(
+            "😬 یوتیوب PO Token می‌خواد. سرویس bgutil رو روشن کن و YTDLP_YOUTUBE_POT_BASE_URL رو ست کن.",
+            "😬 YouTube needs a PO Token. Start the bgutil sidecar and set YTDLP_YOUTUBE_POT_BASE_URL.",
+        )
+
+    if "sign in to confirm you" in low or "confirm you’re not a bot" in low or "confirm you're not a bot" in low:
+        return fa(
+            "😬 یوتیوب گیر داده (ضدبات). راه‌حل بدون پروکسی پولی: PO Token (bgutil) + چندتا cookies.txt و MAX_CONCURRENT_DOWNLOADS=1.",
+            "😬 YouTube blocked the server (anti-bot). No-paid-proxy fix: PO Token (bgutil) + a cookie pool + MAX_CONCURRENT_DOWNLOADS=1.",
+        )
+
     if "private" in low or "login" in low or "sign in" in low or "cookies" in low or "confirm you" in low:
         return fa(
             "😬 سایت مقصد گیر داده (لاگین/کوکی یا ضدبات). یه کم بعد دوباره بزن یا کیفیت پایین‌تر انتخاب کن.",

@@ -4,10 +4,123 @@ import logging
 import os
 import subprocess
 import uuid
+from urllib.parse import urlparse
 from bot.config.settings import config
+from bot.utils.round_robin import rotate as _round_robin_rotate
 import yt_dlp
 
 logger = logging.getLogger(__name__)
+
+def _split_list(value: str | None) -> list[str]:
+    items = []
+    for raw in (value or "").split(","):
+        s = (raw or "").strip()
+        if s:
+            items.append(s)
+    return items
+
+def _is_youtube_url(u: str) -> bool:
+    try:
+        host = (urlparse(u).netloc or "").lower()
+    except Exception:
+        host = ""
+    return ("youtube.com" in host) or ("youtu.be" in host)
+
+def _is_youtube_login_block(msg: str) -> bool:
+    m = (msg or "").lower()
+    return (
+        "sign in to confirm you" in m
+        or "confirm you’re not a bot" in m
+        or "confirm you're not a bot" in m
+        or "login_required" in m
+    )
+
+def _youtube_player_clients_from_config() -> list[str]:
+    raw = (getattr(config, "ytdlp_youtube_player_clients", "") or "").strip()
+    out = []
+    for p in (raw or "").split(","):
+        s = (p or "").strip()
+        if s:
+            out.append(s)
+    return out or ["mweb", "web_safari", "android", "ios", "web"]
+
+def _apply_youtube_hardening(ydl_opts: dict, url: str) -> None:
+    if not _is_youtube_url(url):
+        return
+    _merge_extractor_args(ydl_opts, {"youtube": {"player_client": _youtube_player_clients_from_config()}})
+    pot_base = (getattr(config, "ytdlp_youtube_pot_base_url", None) or "").strip()
+    if pot_base:
+        _merge_extractor_args(ydl_opts, {"youtubepot-bgutilhttp": {"base_url": [pot_base]}})
+    ydl_opts.setdefault("sleep_interval", 1)
+    ydl_opts.setdefault("max_sleep_interval", 3)
+    ydl_opts.setdefault("sleep_interval_requests", 1)
+    ydl_opts.setdefault("concurrent_fragment_downloads", 1)
+    ydl_opts.setdefault("http_chunk_size", 10 * 1024 * 1024)
+    if not (ydl_opts.get("user_agent") or "").strip():
+        ydl_opts["user_agent"] = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        )
+    headers = dict(ydl_opts.get("http_headers") or {})
+    headers.setdefault("Accept-Language", "en-US,en;q=0.9")
+    if (ydl_opts.get("user_agent") or "").strip():
+        headers.setdefault("User-Agent", str(ydl_opts["user_agent"]))
+    ydl_opts["http_headers"] = headers
+
+def _cookiefile_candidates() -> list[str]:
+    candidates = []
+    cookie_file = (config.ytdlp_cookie_file or "").strip()
+    if cookie_file:
+        candidates.append(cookie_file)
+        candidates.append(os.path.join("/app/data", os.path.basename(cookie_file)))
+    candidates.append("/app/data/cookies.txt")
+    candidates.append("data/cookies.txt")
+
+    cookie_dir = (getattr(config, "ytdlp_cookie_dir", "") or "").strip()
+    if cookie_dir and os.path.isdir(cookie_dir):
+        try:
+            for name in sorted(os.listdir(cookie_dir)):
+                if not name.lower().endswith(".txt"):
+                    continue
+                candidates.append(os.path.join(cookie_dir, name))
+        except Exception:
+            pass
+
+    out = []
+    seen = set()
+    for c in candidates:
+        if not c or c in seen:
+            continue
+        seen.add(c)
+        if os.path.exists(c):
+            out.append(c)
+    return out
+
+def _cookiefile_candidates_rotated() -> list[str]:
+    return _round_robin_rotate(_cookiefile_candidates())
+
+def _proxy_candidates_for_url(url: str) -> list[str]:
+    proxies = []
+    if _is_youtube_url(url):
+        yt_proxy = (getattr(config, "ytdlp_youtube_proxy", "") or "").strip()
+        if yt_proxy:
+            proxies.append(yt_proxy)
+        proxies.extend(_split_list(getattr(config, "ytdlp_youtube_proxy_list", None)))
+
+    proxies.extend(_split_list(getattr(config, "ytdlp_proxy_list", None)))
+    base_proxy = (config.ytdlp_proxy or "").strip()
+    if base_proxy:
+        proxies.append(base_proxy)
+
+    out = []
+    seen = set()
+    for p in proxies:
+        s = (p or "").strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
 
 def _cookiefile_has_youtube_cookies(path: str) -> bool:
     try:
@@ -141,12 +254,13 @@ def _probe_sync(url: str) -> dict:
     if getattr(config, "ytdlp_force_ipv4", False):
         ydl_opts["source_address"] = "0.0.0.0"
 
-    proxy = (config.ytdlp_proxy or "").strip()
-    if proxy:
-        ydl_opts["proxy"] = proxy
+    proxies = _proxy_candidates_for_url(url)
+    if proxies:
+        ydl_opts["proxy"] = proxies[0]
     user_agent = (config.ytdlp_user_agent or "").strip()
     if user_agent:
         ydl_opts["user_agent"] = user_agent
+    _apply_youtube_hardening(ydl_opts, url)
 
     if "pornhub.com" in (url or ""):
         ydl_opts["geo_bypass"] = True
@@ -324,30 +438,16 @@ def _download_sync(url: str, mode: str, max_height: int | None, audio_bitrate_kb
         _merge_extractor_args(ydl_opts, {"youtubetab": {"skip": ["authcheck"]}})
     if getattr(config, "ytdlp_force_ipv4", False):
         ydl_opts["source_address"] = "0.0.0.0"
-    cookie_file = (config.ytdlp_cookie_file or "").strip()
-    cookie_candidates = []
-    if cookie_file:
-        cookie_candidates.append(cookie_file)
-        cookie_candidates.append(os.path.join("/app/data", os.path.basename(cookie_file)))
-    cookie_candidates.append("/app/data/cookies.txt")
-    cookie_candidates.append("data/cookies.txt")
-    for candidate in cookie_candidates:
-        if candidate and os.path.exists(candidate):
-            ydl_opts['cookiefile'] = candidate
-            logger.info("yt-dlp cookiefile=%s", candidate)
-            break
     cookies_from_browser = (getattr(config, "ytdlp_cookies_from_browser", "") or "").strip()
     if cookies_from_browser:
         parts = [p.strip() for p in cookies_from_browser.split(":", 1)]
         browser = parts[0]
         profile = parts[1] if len(parts) > 1 and parts[1] else None
         ydl_opts["cookiesfrombrowser"] = (browser, profile) if profile else (browser,)
-    proxy = (config.ytdlp_proxy or "").strip()
-    if proxy:
-        ydl_opts['proxy'] = proxy
     user_agent = (config.ytdlp_user_agent or "").strip()
     if user_agent:
         ydl_opts['user_agent'] = user_agent
+    _apply_youtube_hardening(ydl_opts, url)
 
     if "pornhub.com" in (url or ""):
         ydl_opts["geo_bypass"] = True
@@ -443,18 +543,56 @@ def _download_sync(url: str, mode: str, max_height: int | None, audio_bitrate_kb
                 fallback_opts['format'] = 'best'
                 return run_download(fallback_opts)
 
+        def attempt_download(base_opts: dict, cookiefile: str | None, proxy: str | None) -> tuple[dict, str]:
+            opts = copy.deepcopy(base_opts)
+            if cookiefile:
+                opts["cookiefile"] = cookiefile
+            else:
+                opts.pop("cookiefile", None)
+            if proxy:
+                opts["proxy"] = proxy
+            else:
+                opts.pop("proxy", None)
+            return download_with_format_fallback(opts)
+
         try:
-            info, file_path = download_with_format_fallback(ydl_opts)
+            info, file_path = attempt_download(ydl_opts, None, (_proxy_candidates_for_url(url) or [None])[0])
         except yt_dlp.utils.DownloadError as e:
             msg = str(e)
             if _is_youtubetab_authcheck_error(msg):
                 retry_opts = copy.deepcopy(ydl_opts)
                 _merge_extractor_args(retry_opts, {"youtubetab": {"skip": ["authcheck"]}})
                 retry_opts.pop("source_address", None)
-                info, file_path = download_with_format_fallback(retry_opts)
+                info, file_path = attempt_download(retry_opts, None, (_proxy_candidates_for_url(url) or [None])[0])
             else:
                 m = msg.lower()
-                if "source_address" in ydl_opts and (
+                if _is_youtube_login_block(msg) and _is_youtube_url(url):
+                    cookiefiles = _cookiefile_candidates_rotated()
+                    proxies = _proxy_candidates_for_url(url)
+                    max_tries = int(getattr(config, "ytdlp_youtube_login_retries", 3) or 0)
+                    max_tries = max(1, max_tries)
+                    tried = 0
+                    last_e = e
+                    for proxy in (proxies or [None]):
+                        for cookiefile in (cookiefiles or [None]):
+                            tried += 1
+                            try:
+                                info, file_path = attempt_download(ydl_opts, cookiefile, proxy)
+                                last_e = None
+                                break
+                            except yt_dlp.utils.DownloadError as e2:
+                                last_e = e2
+                                if not _is_youtube_login_block(str(e2)):
+                                    raise
+                            if tried >= max_tries and max_tries > 0:
+                                break
+                        if last_e is None:
+                            break
+                        if tried >= max_tries and max_tries > 0:
+                            break
+                    if last_e is not None:
+                        raise last_e
+                elif "source_address" in ydl_opts and (
                     "unable to download webpage" in m
                     or "timed out" in m
                     or "network is unreachable" in m
@@ -463,7 +601,7 @@ def _download_sync(url: str, mode: str, max_height: int | None, audio_bitrate_kb
                 ):
                     retry_opts = copy.deepcopy(ydl_opts)
                     retry_opts.pop("source_address", None)
-                    info, file_path = download_with_format_fallback(retry_opts)
+                    info, file_path = attempt_download(retry_opts, None, (_proxy_candidates_for_url(url) or [None])[0])
                 else:
                     raise
 
