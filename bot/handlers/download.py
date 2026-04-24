@@ -62,17 +62,12 @@ async def _check_quota(user_id: int, lang: str, bytes_needed: int) -> tuple[bool
     remaining = max(0, int(limit) - int(used))
     return False, get_text(lang, "quota_exceeded", remaining=format_bytes(remaining))
 
-async def _send_quota_after_download(
-    message: Message,
-    user_id: int,
-    lang: str,
-    auto_delete_seconds: int | None = None,
-) -> None:
+async def _send_quota_after_download(message: Message, user_id: int, lang: str) -> None:
     try:
         used = await get_user_used_bytes_today(user_id)
         limit = await get_user_daily_quota_bytes(user_id)
         remaining = max(0, int(limit) - int(used))
-        sent = await message.answer(
+        await message.answer(
             get_text(
                 lang,
                 "quota_after_download",
@@ -81,7 +76,6 @@ async def _send_quota_after_download(
                 remaining=format_bytes(remaining),
             )
         )
-        _schedule_auto_delete(sent, auto_delete_seconds)
     except Exception:
         pass
 
@@ -274,13 +268,12 @@ async def _handle_x_message(message: Message, user_id: int, lang: str, url: str,
         except Exception:
             pass
         try:
-            if auto_delete_seconds:
-                notice = await message.answer(get_text(lang, "adult_autodelete_notice", seconds=str(int(auto_delete_seconds))))
-                _schedule_auto_delete(notice, auto_delete_seconds)
             await _send_quick_files(message, lang, result.get("caption"), result, auto_delete_seconds=auto_delete_seconds)
             await consume_bytes(user_id, total_bytes)
             await log_download(user_id, url, "video", bytes_used=total_bytes, title=(result.get("caption") or ""))
-            await _send_quota_after_download(message, user_id, lang, auto_delete_seconds=auto_delete_seconds)
+            if auto_delete_seconds:
+                await message.answer(get_text(lang, "adult_autodelete_notice", seconds=str(int(auto_delete_seconds))))
+            await _send_quota_after_download(message, user_id, lang)
         except Exception as e:
             await message.answer(get_text(lang, "error", error=to_user_friendly_error(lang, str(e))))
     finally:
@@ -319,13 +312,12 @@ async def _handle_quick_message(message: Message, user_id: int, lang: str, url: 
         except Exception:
             pass
         try:
-            if auto_delete_seconds:
-                notice = await message.answer(get_text(lang, "adult_autodelete_notice", seconds=str(int(auto_delete_seconds))))
-                _schedule_auto_delete(notice, auto_delete_seconds)
             await _send_quick_files(message, lang, result.get("caption"), result, auto_delete_seconds=auto_delete_seconds)
             await consume_bytes(user_id, total_bytes)
             await log_download(user_id, url, "video", bytes_used=total_bytes, title=(result.get("caption") or ""))
-            await _send_quota_after_download(message, user_id, lang, auto_delete_seconds=auto_delete_seconds)
+            if auto_delete_seconds:
+                await message.answer(get_text(lang, "adult_autodelete_notice", seconds=str(int(auto_delete_seconds))))
+            await _send_quota_after_download(message, user_id, lang)
         except Exception as e:
             await message.answer(get_text(lang, "error", error=to_user_friendly_error(lang, str(e))))
     finally:
@@ -667,11 +659,6 @@ async def process_download_choice(callback: CallbackQuery):
 
     await queue_manager.wait_and_acquire()
     try:
-        if auto_delete_seconds:
-            notice = await callback.message.answer(
-                get_text(lang, "adult_autodelete_notice", seconds=str(int(auto_delete_seconds)))
-            )
-            _schedule_auto_delete(notice, auto_delete_seconds)
         await callback.message.edit_text(get_text(lang, 'downloading'))
 
         max_height = None
@@ -1040,7 +1027,9 @@ async def process_download_choice(callback: CallbackQuery):
 
             await consume_bytes(user_id, charge_bytes)
             await log_download(user_id, url, download_type, bytes_used=charge_bytes, title=title)
-            await _send_quota_after_download(callback.message, user_id, lang, auto_delete_seconds=auto_delete_seconds)
+            if auto_delete_seconds:
+                await callback.message.answer(get_text(lang, "adult_autodelete_notice", seconds=str(int(auto_delete_seconds))))
+            await _send_quota_after_download(callback.message, user_id, lang)
             try:
                 await callback.message.delete()
             except Exception:
