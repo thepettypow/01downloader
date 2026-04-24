@@ -5,7 +5,7 @@ import random
 import re
 import shutil
 import uuid
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs, unquote
 from aiogram import Router, F
 from aiogram.types import Message, FSInputFile, CallbackQuery
 from bot.models.database import (
@@ -517,6 +517,27 @@ def _sanitize_url(url: str) -> str:
         u = u[:-1]
     return u
 
+def _normalize_facebook_url(url: str) -> str:
+    u = (url or "").strip()
+    try:
+        p = urlparse(u)
+        host = (p.netloc or "").lower()
+        path = p.path or ""
+        q = parse_qs(p.query or "")
+    except Exception:
+        return u
+
+    if host.endswith("facebook.com") or host.endswith("fb.watch") or host.endswith("facebookcorewwwi.onion"):
+        if path.startswith("/login") or path.startswith("/login.php"):
+            nxt = (q.get("next") or q.get("next_url") or [""])[0]
+            nxt = unquote(nxt or "").strip()
+            return nxt or u
+        if host in ("l.facebook.com", "lm.facebook.com") and path.startswith("/l.php"):
+            target = (q.get("u") or [""])[0]
+            target = unquote(target or "").strip()
+            return target or u
+    return u
+
 @router.message(F.text.regexp(r'https?://[^\s]+'))
 async def process_url(message: Message):
     user_id = message.from_user.id
@@ -528,6 +549,7 @@ async def process_url(message: Message):
     
     for url in urls:
         clean_url = _sanitize_url(url)
+        clean_url = _sanitize_url(_normalize_facebook_url(clean_url))
         if not clean_url:
             continue
         auto_delete_seconds = None
@@ -590,6 +612,7 @@ async def process_download_choice(callback: CallbackQuery):
         await callback.answer(get_text(lang, 'invalid_request'), show_alert=True)
         return
     url = _sanitize_url(url)
+    url = _sanitize_url(_normalize_facebook_url(url))
     auto_delete_seconds = None
     if bool(getattr(config, "adult_autodelete_enabled", True)) and _is_adult_site(url):
         auto_delete_seconds = int(getattr(config, "adult_autodelete_seconds", 15))
