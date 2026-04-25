@@ -5,6 +5,7 @@ import random
 import re
 import shutil
 import uuid
+from datetime import datetime, timezone
 from urllib.parse import urlparse, parse_qs, unquote
 from aiogram import Router, F
 from aiogram.types import Message, FSInputFile, CallbackQuery
@@ -108,13 +109,53 @@ def _is_adult_site(u: str) -> bool:
         host = (urlparse(u).netloc or "").lower()
     except Exception:
         host = ""
+    host = host.split(":", 1)[0]
+    if host.startswith("www."):
+        host = host[4:]
+    adult_hosts = (
+        "pornhub.com",
+        "xvideos.com",
+        "xnxx.com",
+        "redtube.com",
+        "youporn.com",
+        "tube8.com",
+        "spankbang.com",
+        "xhamster.com",
+        "beeg.com",
+        "youjizz.com",
+        "pornone.com",
+    )
+    if any(host == d or host.endswith("." + d) for d in adult_hosts):
+        return True
     return any(
-        n in host or n in s
+        n in s
         for n in (
             "pornhub",
             "xvideos",
+            "xnxx",
+            "redtube",
+            "youporn",
+            "tube8",
+            "spankbang",
+            "xhamster",
+            "beeg",
+            "youjizz",
+            "pornone",
         )
     )
+
+def _adult_downloads_blocked() -> bool:
+    if not bool(getattr(config, "adult_downloads_enabled", False)):
+        return True
+    until = getattr(config, "adult_downloads_block_until", None)
+    if not until:
+        return False
+    try:
+        if until.tzinfo is None:
+            until = until.replace(tzinfo=timezone.utc)
+    except Exception:
+        return False
+    return datetime.now(timezone.utc) < until
 
 def _is_long_video_site(u: str) -> bool:
     try:
@@ -594,6 +635,9 @@ async def process_url(message: Message):
         clean_url = _sanitize_url(_normalize_facebook_url(clean_url))
         if not clean_url:
             continue
+        if _is_adult_site(clean_url) and _adult_downloads_blocked():
+            await message.answer(get_text(lang, "adult_downloads_disabled"))
+            continue
         auto_delete_seconds = None
         if bool(getattr(config, "adult_autodelete_enabled", True)) and _is_adult_site(clean_url):
             auto_delete_seconds = int(getattr(config, "adult_autodelete_seconds", 15))
@@ -648,6 +692,10 @@ async def process_download_choice(callback: CallbackQuery):
         return
     url = _sanitize_url(url)
     url = _sanitize_url(_normalize_facebook_url(url))
+    if _is_adult_site(url) and _adult_downloads_blocked():
+        await delete_pending_download(pending_id)
+        await callback.answer(get_text(lang, "adult_downloads_disabled"), show_alert=True)
+        return
     auto_delete_seconds = None
     if bool(getattr(config, "adult_autodelete_enabled", True)) and _is_adult_site(url):
         auto_delete_seconds = int(getattr(config, "adult_autodelete_seconds", 15))

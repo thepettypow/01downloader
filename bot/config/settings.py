@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 from pydantic_settings import BaseSettings
 
@@ -52,6 +53,8 @@ class Settings(BaseSettings):
     cleanup_interval_seconds: int = 3600
     adult_autodelete_enabled: bool = True
     adult_autodelete_seconds: int = 15
+    adult_downloads_enabled: bool = False
+    adult_downloads_block_until: Optional[datetime] = None
 
     def model_post_init(self, __context) -> None:
         if self.telegram_is_local_api:
