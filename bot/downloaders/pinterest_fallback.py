@@ -7,6 +7,10 @@ from urllib.parse import quote_plus
 
 from bot.config.settings import config
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def _guess_ext(content_type: str, url: str) -> str:
     ct = (content_type or "").lower()
@@ -63,6 +67,7 @@ async def download_pinterest_images(url: str) -> dict:
             "User-Agent": user_agent,
             "Accept": "application/json,text/plain,*/*",
             "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.pinterest.com/",
         }
         unique_dir = os.path.join(config.download_dir, uuid.uuid4().hex)
         os.makedirs(unique_dir, exist_ok=True)
@@ -75,10 +80,12 @@ async def download_pinterest_images(url: str) -> dict:
                     img = (data or {}).get("thumbnail_url") or ""
                     title = (data or {}).get("title") or ""
                 else:
+                    logger.warning("pinterest oembed status=%s url=%s", resp.status, url)
                     title = ""
             if not img:
                 async with session.get(url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=30)) as resp2:
                     if resp2.status != 200:
+                        logger.warning("pinterest html status=%s url=%s", resp2.status, url)
                         return {"success": False, "error": f"Pinterest HTML HTTP {resp2.status}"}
                     html = await resp2.text(errors="ignore")
                 img = _extract_meta_image(html)

@@ -300,14 +300,11 @@ async def _handle_quick_message(message: Message, user_id: int, lang: str, url: 
     try:
         await status_msg.edit_text(get_text(lang, 'downloading'))
         loop = asyncio.get_event_loop()
-        pinterest_err = None
         if _is_pinterest_url(url):
             result = await download_pinterest_images(url)
             if not result.get("success"):
-                pinterest_err = str(result.get("error") or "")
-                result = await loop.run_in_executor(None, quick_download, url)
-            if not result.get("success") and pinterest_err:
-                result = {"success": False, "error": pinterest_err}
+                await status_msg.edit_text(get_text(lang, 'error', error=to_user_friendly_error(lang, result.get("error", ""))))
+                return
         else:
             result = await loop.run_in_executor(None, quick_download, url)
         if not result.get("success"):
