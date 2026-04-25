@@ -34,6 +34,23 @@ def _extract_meta_image(html: str) -> str:
             return m.group(1).strip()
     return ""
 
+def _image_url_candidates(url: str) -> list[str]:
+    u = (url or "").strip()
+    if not u:
+        return []
+    candidates = [u]
+    for size in ("originals", "736x", "564x"):
+        candidates.append(re.sub(r"/\d+x/", f"/{size}/", u))
+    out = []
+    seen = set()
+    for c in candidates:
+        s = (c or "").strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
 async def download_pinterest_images(url: str) -> dict:
     os.makedirs(config.download_dir, exist_ok=True)
     oembed = f"https://www.pinterest.com/oembed.json?url={quote_plus(url)}"
@@ -67,15 +84,20 @@ async def download_pinterest_images(url: str) -> dict:
                 img = _extract_meta_image(html)
                 if not img:
                     return {"success": False, "error": "Pinterest HTML: no og:image"}
-
-            async with session.get(img, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=90)) as r2:
-                if r2.status != 200:
-                    return {"success": False, "error": f"Pinterest image HTTP {r2.status}"}
-                ext = _guess_ext(r2.headers.get("Content-Type", ""), img)
-                fp = os.path.join(unique_dir, f"{uuid.uuid4().hex}.{ext}")
-                async with aiofiles.open(fp, "wb") as f:
-                    async for chunk in r2.content.iter_chunked(1024 * 256):
-                        await f.write(chunk)
-            return {"success": True, "file_paths": [fp], "caption": title, "dir_to_clean": unique_dir}
+            last_status = None
+            last_url = None
+            for img_url in _image_url_candidates(img):
+                last_url = img_url
+                async with session.get(img_url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=90)) as r2:
+                    last_status = r2.status
+                    if r2.status != 200:
+                        continue
+                    ext = _guess_ext(r2.headers.get("Content-Type", ""), img_url)
+                    fp = os.path.join(unique_dir, f"{uuid.uuid4().hex}.{ext}")
+                    async with aiofiles.open(fp, "wb") as f:
+                        async for chunk in r2.content.iter_chunked(1024 * 256):
+                            await f.write(chunk)
+                    return {"success": True, "file_paths": [fp], "caption": title, "dir_to_clean": unique_dir}
+            return {"success": False, "error": f"Pinterest image HTTP {last_status} ({last_url})"}
     except Exception as e:
         return {"success": False, "error": str(e)}
