@@ -1,6 +1,7 @@
 import aiohttp
 import aiofiles
 import os
+import re
 import uuid
 from urllib.parse import quote_plus
 
@@ -21,6 +22,17 @@ def _guess_ext(content_type: str, url: str) -> str:
             return "jpg" if ext == "jpeg" else ext
     return "jpg"
 
+def _extract_meta_image(html: str) -> str:
+    s = html or ""
+    patterns = [
+        r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)["\']',
+    ]
+    for pat in patterns:
+        m = re.search(pat, s, flags=re.IGNORECASE)
+        if m and m.group(1):
+            return m.group(1).strip()
+    return ""
 
 async def download_pinterest_images(url: str) -> dict:
     os.makedirs(config.download_dir, exist_ok=True)
@@ -35,23 +47,35 @@ async def download_pinterest_images(url: str) -> dict:
             "Accept": "application/json,text/plain,*/*",
             "Accept-Language": "en-US,en;q=0.9",
         }
+        unique_dir = os.path.join(config.download_dir, uuid.uuid4().hex)
+        os.makedirs(unique_dir, exist_ok=True)
         async with aiohttp.ClientSession(headers=headers) as session:
+            img = ""
+            title = ""
             async with session.get(oembed, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status != 200:
-                    return {"success": False, "error": f"Pinterest oEmbed HTTP {resp.status}"}
-                data = await resp.json(content_type=None)
-            img = (data or {}).get("thumbnail_url") or ""
-            title = (data or {}).get("title") or ""
+                if resp.status == 200:
+                    data = await resp.json(content_type=None)
+                    img = (data or {}).get("thumbnail_url") or ""
+                    title = (data or {}).get("title") or ""
+                else:
+                    title = ""
             if not img:
-                return {"success": False, "error": "Pinterest oEmbed: no thumbnail_url"}
+                async with session.get(url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=30)) as resp2:
+                    if resp2.status != 200:
+                        return {"success": False, "error": f"Pinterest HTML HTTP {resp2.status}"}
+                    html = await resp2.text(errors="ignore")
+                img = _extract_meta_image(html)
+                if not img:
+                    return {"success": False, "error": "Pinterest HTML: no og:image"}
+
             async with session.get(img, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=90)) as r2:
                 if r2.status != 200:
                     return {"success": False, "error": f"Pinterest image HTTP {r2.status}"}
                 ext = _guess_ext(r2.headers.get("Content-Type", ""), img)
-                fp = os.path.join(config.download_dir, f"{uuid.uuid4().hex}.{ext}")
+                fp = os.path.join(unique_dir, f"{uuid.uuid4().hex}.{ext}")
                 async with aiofiles.open(fp, "wb") as f:
                     async for chunk in r2.content.iter_chunked(1024 * 256):
                         await f.write(chunk)
-            return {"success": True, "file_paths": [fp], "caption": title}
+            return {"success": True, "file_paths": [fp], "caption": title, "dir_to_clean": unique_dir}
     except Exception as e:
         return {"success": False, "error": str(e)}
